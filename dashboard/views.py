@@ -1,29 +1,85 @@
-from io import StringIO
+from __future__ import annotations
+
+from pathlib import Path
+from uuid import uuid4
+import time
+
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.template.loader import render_to_string
 import pandas as pd
+
 from .forms import UploadFilesForm
 from .calculations import (
     read_uploaded_files, prepare_dataframe, build_ring_peak_summary,
     build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes
 )
 
-def _store_results(request, df, ring_peaks, g100_peaks):
-    request.session["ring_peaks"] = ring_peaks.to_json(date_format="iso", orient="split")
-    request.session["g100_peaks"] = g100_peaks.to_json(date_format="iso", orient="split")
-    request.session["prepared_df"] = df.to_json(date_format="iso", orient="split")
+CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
+
+
+def _results_dir() -> Path:
+    results_dir = Path(settings.MEDIA_ROOT) / "session_cache"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    return results_dir
+
+
+def _purge_old_cache_files() -> None:
+    now = time.time()
+    for path in _results_dir().glob("*.pkl.gz"):
+        try:
+            if now - path.stat().st_mtime > CACHE_MAX_AGE_SECONDS:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _cache_file(cache_id: str, suffix: str) -> Path:
+    return _results_dir() / f"{cache_id}_{suffix}.pkl.gz"
+
+
+def _store_results(request, df: pd.DataFrame, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame) -> None:
+    _purge_old_cache_files()
+
+    old_cache_id = request.session.get("cache_id")
+    if old_cache_id:
+        for suffix in ("df", "ring", "g100"):
+            try:
+                _cache_file(old_cache_id, suffix).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    cache_id = uuid4().hex
+    df.to_pickle(_cache_file(cache_id, "df"), compression="gzip")
+    ring_peaks.to_pickle(_cache_file(cache_id, "ring"), compression="gzip")
+    g100_peaks.to_pickle(_cache_file(cache_id, "g100"), compression="gzip")
+
+    request.session["cache_id"] = cache_id
+    request.session.modified = True
+
 
 def _load_results(request):
-    ring_json = request.session.get("ring_peaks")
-    g100_json = request.session.get("g100_peaks")
-    df_json = request.session.get("prepared_df")
-    if not ring_json or not g100_json or not df_json:
+    cache_id = request.session.get("cache_id")
+    if not cache_id:
         return None, None, None
-    ring_peaks = pd.read_json(StringIO(ring_json), orient="split")
-    g100_peaks = pd.read_json(StringIO(g100_json), orient="split")
-    df = pd.read_json(StringIO(df_json), orient="split")
+
+    df_path = _cache_file(cache_id, "df")
+    ring_path = _cache_file(cache_id, "ring")
+    g100_path = _cache_file(cache_id, "g100")
+
+    if not df_path.exists() or not ring_path.exists() or not g100_path.exists():
+        return None, None, None
+
+    try:
+        df = pd.read_pickle(df_path, compression="gzip")
+        ring_peaks = pd.read_pickle(ring_path, compression="gzip")
+        g100_peaks = pd.read_pickle(g100_path, compression="gzip")
+    except Exception:
+        return None, None, None
+
     return df, ring_peaks, g100_peaks
+
 
 def _proof_context(df, ring_peaks, g100_peaks, request=None):
     context = {
@@ -38,6 +94,7 @@ def _proof_context(df, ring_peaks, g100_peaks, request=None):
         "proof_ring_timestamp_rows": [],
         "proof_ring_same_time_columns": [],
         "proof_ring_same_time_rows": [],
+        "proof_ring_step3_total": None,
         "proof_g100_columns": [],
         "proof_g100_rows": [],
     }
@@ -87,12 +144,8 @@ def _proof_context(df, ring_peaks, g100_peaks, request=None):
                         context["proof_ring_step3_total"] = round(float(same_time["TX (Gbps)"].sum()), 3)
                     except Exception:
                         context["proof_ring_step3_total"] = None
-    context["proof_groups"] = [
-        ("Step 1: Endpoint TX Total by Timestamp", context.get("proof_ring_endpoint_columns", []), context.get("proof_ring_endpoint_rows", [])),
-        ("Step 2: Total TX by Timestamp", context.get("proof_ring_timestamp_columns", []), context.get("proof_ring_timestamp_rows", [])),
-        ("Step 3: Endpoints at Selected Peak Timestamp", context.get("proof_ring_same_time_columns", []), context.get("proof_ring_same_time_rows", [])),
-    ]
     return context
+
 
 def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
     context = {
@@ -131,9 +184,11 @@ def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
     context.update(_proof_context(df, ring_peaks, g100_peaks, request=request))
     return context
 
+
 def upload_view(request):
     form = UploadFilesForm()
     return render(request, "dashboard/upload.html", {"form": form})
+
 
 def result_view(request):
     if request.method == "POST":
@@ -156,8 +211,11 @@ def result_view(request):
             })
 
         df = prepare_dataframe(raw_df)
+        del raw_df
+
         ring_peaks = build_ring_peak_summary(df)
         g100_peaks = build_100g_peak_summary(df)
+
         _store_results(request, df, ring_peaks, g100_peaks)
         context = _build_context(df, ring_peaks, g100_peaks, errors=errors, request=request)
         return render(request, "dashboard/result.html", context)
@@ -168,14 +226,16 @@ def result_view(request):
     context = _build_context(df, ring_peaks, g100_peaks, request=request)
     return render(request, "dashboard/result.html", context)
 
+
 def proof_data_view(request):
     df, ring_peaks, g100_peaks = _load_results(request)
     if df is None:
-        return JsonResponse({"ok": False, "error": "No session data found. Please upload files again."}, status=400)
+        return JsonResponse({"ok": False, "error": "No cached upload data found. Please upload files again."}, status=400)
 
     proof_context = _proof_context(df, ring_peaks, g100_peaks, request=request)
     html = render_to_string("dashboard/proof_content.html", proof_context, request=request)
     return JsonResponse({"ok": True, "html": html})
+
 
 def download_excel_view(request):
     df, ring_peaks, g100_peaks = _load_results(request)

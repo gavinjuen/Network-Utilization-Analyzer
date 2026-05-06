@@ -2,3 +2,6 @@ django>=5.1,<6
 pandas
 openpyxl
 xlsxwriter
+whitenoise
+dj-database-url
+gunicorn
