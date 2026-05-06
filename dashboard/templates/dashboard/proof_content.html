@@ -1,0 +1,198 @@
+{% load dashboard_extras %}
+<div id="proof-root">
+  <div class="section-card proof-filters">
+    <form id="proof-form" method="get" action="{% url 'proof_data' %}" class="proof-toolbar-form">
+      <div class="proof-toolbar-grid">
+        <div class="proof-field">
+          <div class="field-label">Debug Type</div>
+          <div class="field-control">
+            <select id="debug-select" name="debug">
+              <option value="ring" {% if selected_debug_type == "ring" %}selected{% endif %}>Ring Same Timestamp</option>
+              <option value="g100" {% if selected_debug_type == "g100" %}selected{% endif %}>100G TX/RX Max</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="ring-debug-wrap" class="proof-field" {% if selected_debug_type == 'g100' %}style="display:none;"{% endif %}>
+          <div class="field-label">Ring / Board Pair / Link Instance</div>
+          <div class="field-control">
+            <select id="ring-label" name="ring_label">
+              {% for opt in ring_debug_options %}
+              <option value="{{ opt.label }}" {% if opt.label == selected_ring_label %}selected{% endif %}>{{ opt.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div id="g100-debug-wrap" class="proof-field" {% if selected_debug_type != 'g100' %}style="display:none;"{% endif %}>
+          <div class="field-label">100G Link</div>
+          <div class="field-control">
+            <select id="g100-link" name="g100_link">
+              {% for opt in g100_debug_options %}
+              <option value="{{ opt }}" {% if opt == selected_g100_link %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="proof-action">
+          <button class="action-btn" type="submit">Load Proof</button>
+        </div>
+
+        <div class="proof-note proof-note-inline" id="ring-debug-note" {% if selected_debug_type == 'g100' %}style="display:none;"{% endif %}>
+          Select the ring record to trace how the same-timestamp total was calculated.
+        </div>
+        <div class="proof-note proof-note-inline" id="g100-debug-note" {% if selected_debug_type != 'g100' %}style="display:none;"{% endif %}>
+          Select the 100G link to review the max TX/RX logic.
+        </div>
+      </div>
+    </form>
+  </div>
+
+  {% if selected_debug_type == "ring" %}
+  <div class="proof-layout">
+    <div class="section-card proof-card">
+      <div class="section-head">
+        <div>
+          <h3 class="section-title">Step 1</h3>
+          <div class="section-note">Endpoint TX by timestamp</div>
+        </div>
+        <div class="proof-chip-row">
+          <span class="table-chip util-nodata">Input</span>
+        </div>
+      </div>
+      <div class="table-shell">
+        {% if proof_ring_step3_total %}<div class="proof-note" style="padding:0 16px 10px; color:#dff7ea;">Selected peak total: <strong>{{ proof_ring_step3_total }} Gbps</strong></div>{% endif %}
+        <div class="proof-table-wrap">
+          <table class="native-table table-compact">
+            <thead><tr>{% for c in proof_ring_endpoint_columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for row in proof_ring_endpoint_rows %}
+              <tr>
+                {% for c in proof_ring_endpoint_columns %}
+                <td class="{% if c == 'TX (Gbps)' %}num{% endif %}">
+                  {% if c == "Endpoint" %}
+                    <span class="truncate-1 truncate-endpoint" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+                  {% else %}
+                    {{ row|get_item:c }}
+                  {% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+            {% empty %}
+              <tr><td colspan="{{ proof_ring_endpoint_columns|length }}" class="empty-state">No data found.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card proof-card">
+      <div class="section-head">
+        <div>
+          <h3 class="section-title">Step 2</h3>
+          <div class="section-note">Total TX at each timestamp</div>
+        </div>
+        <div class="proof-chip-row">
+          <span class="table-chip util-warning">Calculated</span>
+        </div>
+      </div>
+      <div class="table-shell">
+        <div class="proof-table-wrap">
+          <table class="native-table table-compact">
+            <thead><tr>{% for c in proof_ring_timestamp_columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for row in proof_ring_timestamp_rows %}
+              <tr>
+                {% for c in proof_ring_timestamp_columns %}
+                <td class="{% if c == 'Total TX (Gbps)' %}num{% endif %}">{{ row|get_item:c }}</td>
+                {% endfor %}
+              </tr>
+            {% empty %}
+              <tr><td colspan="{{ proof_ring_timestamp_columns|length }}" class="empty-state">No data found.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card proof-card proof-full proof-step-final">
+      <div class="section-head">
+        <div>
+          <h3 class="section-title">Step 3</h3>
+          <div class="section-note">Endpoints at the selected peak timestamp</div>
+        </div>
+        <div class="proof-chip-row">
+          <span class="proof-focus-badge">Final Result</span>
+          <span class="table-chip util-normal">Result</span>
+          {% if proof_ring_same_time_rows %}
+            <span class="proof-focus-badge">Total: {{ proof_ring_step3_total }} Gbps</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="table-shell">
+        <div class="proof-table-wrap">
+          <table class="native-table table-compact">
+            <thead><tr>{% for c in proof_ring_same_time_columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for row in proof_ring_same_time_rows %}
+              <tr>
+                {% for c in proof_ring_same_time_columns %}
+                <td class="{% if c == 'TX (Gbps)' %}num{% endif %}">
+                  {% if c == "Endpoint" %}
+                    <span class="truncate-1 truncate-endpoint" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+                  {% else %}
+                    {{ row|get_item:c }}
+                  {% endif %}
+                </td>
+                {% endfor %}
+              </tr>
+            {% empty %}
+              <tr><td colspan="{{ proof_ring_same_time_columns|length }}" class="empty-state">No data found.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="section-card proof-card">
+    <div class="section-head">
+      <div>
+        <h3 class="section-title">100G TX/RX Max Proof</h3>
+        <div class="section-note">Review the selected 100G link calculation logic.</div>
+      </div>
+      <div class="proof-chip-row">
+        <span class="table-chip util-warning">Calculated</span>
+      </div>
+    </div>
+    <div class="table-shell">
+      <div class="proof-table-wrap">
+        <table class="native-table table-compact">
+          <thead><tr>{% for c in proof_g100_columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for row in proof_g100_rows %}
+            <tr>
+              {% for c in proof_g100_columns %}
+              <td class="{% if c == 'TX (Gbps)' or c == 'RX (Gbps)' or c == 'MAX (Gbps)' %}num{% endif %}">
+                {% if c == "100G Link" or c == "Resource Name" %}
+                  <span class="truncate-1 truncate-g100" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+                {% else %}
+                  {{ row|get_item:c }}
+                {% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+          {% empty %}
+            <tr><td colspan="{{ proof_g100_columns|length }}" class="empty-state">No data found.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>

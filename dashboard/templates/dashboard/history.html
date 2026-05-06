@@ -1,0 +1,67 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Upload History | Ring Portal{% endblock %}
+{% block content %}
+<div class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div>
+            <h2>Saved Upload History</h2>
+            <div class="small-note">Reopen or delete previously saved calculated sessions.</div>
+        </div>
+        <div>
+            <a class="btn secondary" href="{% url 'upload' %}">Back to Upload</a>
+        </div>
+    </div>
+
+    <div class="table-wrap" style="margin-top:12px;">
+        <table id="history-table" class="display compact">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Created At</th>
+                    <th>Files</th>
+                    <th>Skiprows</th>
+                    <th>Open</th>
+                    <th>Delete</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in recent_sessions %}
+                <tr>
+                    <td>{{ item.id }}</td>
+                    <td>{{ item.created_at }}</td>
+                    <td title="{{ item.original_filenames }}">{{ item.original_filenames }}</td>
+                    <td>{{ item.skiprows }}</td>
+                    <td><a class="btn" href="{% url 'load_history' item.id %}">Open</a></td>
+                    <td><a class="btn secondary" href="{% url 'delete_history' item.id %}" onclick="return confirm('Delete this saved session?');">Delete</a></td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td>-</td>
+                    <td>-</td>
+                    <td>No saved sessions found.</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td>-</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    $('#history-table').DataTable({
+        scrollX: false,
+        autoWidth: false,
+        pageLength: 25,
+        lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+        searching: true,
+        ordering: true,
+        info: true
+    });
+});
+</script>
+{% endblock %}

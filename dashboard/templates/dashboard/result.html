@@ -1,0 +1,509 @@
+{% extends "dashboard/base.html" %}
+{% load dashboard_extras %}
+{% block title %}Results | Ring Portal{% endblock %}
+{% block app_body_class %}no-sidebar{% endblock %}
+{% block default_tab %}dashboard{% endblock %}
+{% block sidebar_items %}
+<a class="side-item" href="{% url 'upload' %}"><i class="mdi mdi-cloud-upload-outline"></i><span>Upload</span></a>
+<a class="side-item" :class="{active: activeTab==='dashboard'}" href="#" @click.prevent="activeTab='dashboard'"><i class="mdi mdi-view-dashboard-outline"></i><span>Dashboard</span></a>
+<a class="side-item" :class="{active: activeTab==='ring'}" href="#" @click.prevent="activeTab='ring'"><i class="mdi mdi-chart-box-outline"></i><span>Ring Summary</span></a>
+<a class="side-item" :class="{active: activeTab==='g100'}" href="#" @click.prevent="activeTab='g100'"><i class="mdi mdi-ethernet"></i><span>100G Summary</span></a>
+<a class="side-item" :class="{active: activeTab==='proof'}" href="#" @click.prevent="activeTab='proof'"><i class="mdi mdi-bug-outline"></i><span>Proof / Debug</span></a>
+{% endblock %}
+{% block content %}
+<div class="page-tabs">
+  <button type="button" class="page-tab" :class="{active: activeTab==='dashboard'}" @click="activeTab='dashboard'">Dashboard</button>
+  <button type="button" class="page-tab" :class="{active: activeTab==='ring'}" @click="activeTab='ring'">Ring Summary</button>
+  <button type="button" class="page-tab" :class="{active: activeTab==='g100'}" @click="activeTab='g100'">100G Summary</button>
+  <button type="button" class="page-tab" :class="{active: activeTab==='proof'}" @click="activeTab='proof'">Proof / Debug</button>
+</div>
+
+{% if errors %}
+<div class="section-card" style="padding:14px 16px; border-color:#d8b1a8; background:#f2d8d2; color:#7b3d36; margin-bottom:14px;">
+  <ul style="margin:0; padding-left:18px;">{% for err in errors %}<li>{{ err }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<div v-show="activeTab==='dashboard'">
+  <div class="toolbar-row">
+    <div>
+      <h1 class="page-title" style="font-size:24px; margin:0;">Analytics</h1>
+      <div class="page-subtitle" style="margin-bottom:0;">Overview of ring utilization, 100G links, and top offenders.</div>
+    </div>
+    <div class="segmented"><span class="active">7D</span><span>30D</span><span>90D</span></div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-title">Unique Rings</div>
+      <div class="kpi-value">{{ ring_count }}</div>
+      <div class="kpi-pill">↗ Active</div>
+      <div class="kpi-spark"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Ring Rows</div>
+      <div class="kpi-value">{{ ring_row_count }}</div>
+      <div class="kpi-pill">↗ Ready</div>
+      <div class="kpi-spark"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">100G Rows</div>
+      <div class="kpi-value">{{ g100_count }}</div>
+      <div class="kpi-pill red">↓ Review</div>
+      <div class="kpi-spark red"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Busiest Ring</div>
+      <div class="kpi-value">{{ busiest_ring|floatformat:3 }} Gbps</div>
+      <div class="kpi-pill">↗ Peak</div>
+      <div class="kpi-spark"></div>
+    </div>
+  </div>
+
+  <div class="split-grid">
+    <div class="section-card">
+      <div class="section-head">
+        <div>
+          <h3 class="section-title">Top 10 Rings Chart</h3>
+          <div class="section-note">Bar chart of highest Total TX (Gbps).</div>
+        </div>
+      </div>
+      <div class="chart-wrap"><div class="chart-box"><canvas id="ringChart"></canvas></div></div>
+    </div>
+    <div class="section-card">
+      <div class="section-head">
+        <div>
+          <h3 class="section-title">Top 10 100G Chart</h3>
+          <div class="section-note">Bar chart of highest Peak Util (Gbps).</div>
+        </div>
+      </div>
+      <div class="chart-wrap"><div class="chart-box"><canvas id="g100Chart"></canvas></div></div>
+    </div>
+  </div>
+
+  <div class="split-grid">
+    <div class="section-card">
+      <div class="section-head">
+        <div>
+          <h3 class="section-title">Top 10 Rings</h3>
+          <div class="section-note">Quick ranked view.</div>
+        </div>
+      </div>
+      <div class="table-shell"><div class="table-wrap">
+        <table class="native-table col-top10-ring">
+          <thead><tr>{% for c in top10_ring_columns %}<th class="sortable" data-col="{{ c }}">{{ c }}<span class="sort-indicator"></span></th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for row in top10_ring_rows %}
+            <tr>
+              {% for c in top10_ring_columns %}
+              <td class="{% if c == 'TX 1 (Gbps)' or c == 'TX 2 (Gbps)' or c == 'Total TX (Gbps)' or c == 'Max Capacity (Gbps)' or c == 'Util %' or c == 'Peak Util (Gbps)' %}num{% endif %}">
+                {% if c == "Util Band" %}
+                  {% with val=row|get_item:c %}
+                    {% if val == "Normal" %}<span class="table-chip util-normal">Normal</span>
+                    {% elif val == "Warning" %}<span class="table-chip util-warning">Warning</span>
+                    {% elif val == "Critical" %}<span class="table-chip util-critical">Critical</span>
+                    {% else %}<span class="table-chip util-nodata">{{ val }}</span>{% endif %}
+                  {% endwith %}
+                {% else %}
+                  <span title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+                {% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+            {% empty %}
+            <tr><td colspan="{{ top10_ring_columns|length }}" class="empty-state">No data found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div><div class="table-toolbar" style="padding:12px 16px 14px;"><div class="small-note" id="top10-ring-count">{{ top10_ring_rows|length }} row(s)</div><div class="pager" id="top10-ring-pager"></div></div></div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-head">
+        <div>
+          <h3 class="section-title">Top 10 100G Links</h3>
+          <div class="section-note">Quick ranked view.</div>
+        </div>
+      </div>
+      <div class="table-shell"><div class="table-wrap">
+        <table class="native-table col-top10-g100">
+          <thead><tr>{% for c in top10_100g_columns %}<th class="sortable" data-col="{{ c }}">{{ c }}<span class="sort-indicator"></span></th>{% endfor %}</tr></thead>
+          <tbody>
+            {% for row in top10_100g_rows %}
+            <tr>
+              {% for c in top10_100g_columns %}
+              <td class="{% if c == 'TX 1 (Gbps)' or c == 'TX 2 (Gbps)' or c == 'Total TX (Gbps)' or c == 'Max Capacity (Gbps)' or c == 'Util %' or c == 'Peak Util (Gbps)' %}num{% endif %}">
+                {% if c == "Util Band" %}
+                  {% with val=row|get_item:c %}
+                    {% if val == "Normal" %}<span class="table-chip util-normal">Normal</span>
+                    {% elif val == "Warning" %}<span class="table-chip util-warning">Warning</span>
+                    {% elif val == "Critical" %}<span class="table-chip util-critical">Critical</span>
+                    {% else %}<span class="table-chip util-nodata">{{ val }}</span>{% endif %}
+                  {% endwith %}
+                {% else %}
+                  <span title="{{ row|get_item:c }}" class="{% if c == '100G Link' %}truncate-1 truncate-g100{% endif %}">{{ row|get_item:c }}</span>
+                {% endif %}
+              </td>
+              {% endfor %}
+            </tr>
+            {% empty %}
+            <tr><td colspan="{{ top10_100g_columns|length }}" class="empty-state">No data found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div><div class="table-toolbar" style="padding:12px 16px 14px;"><div class="small-note" id="top10-g100-count">{{ top10_100g_rows|length }} row(s)</div><div class="pager" id="top10-g100-pager"></div></div></div>
+    </div>
+  </div>
+</div>
+
+<div v-show="activeTab==='ring'">
+  <div class="toolbar-row">
+    <div>
+      <h1 class="page-title" style="font-size:24px; margin:0;">Ring Summary</h1>
+      <div class="page-subtitle" style="margin-bottom:0;">Detailed table with the same data, now in the analytics-style layout.</div>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="table-chip util-nodata filter-chip-btn" data-table="ring" data-band="All">All</button>
+      <button type="button" class="table-chip util-normal filter-chip-btn" data-table="ring" data-band="Normal">Normal</button>
+      <button type="button" class="table-chip util-warning filter-chip-btn" data-table="ring" data-band="Warning">Warning</button>
+      <button type="button" class="table-chip util-critical filter-chip-btn" data-table="ring" data-band="Critical">Critical</button>
+      <a class="action-btn" href="{% url 'download_excel' %}">Download Excel</a>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-head"><div><h3 class="section-title">Ring Summary Table</h3><div class="section-note">{{ ring_row_count }} row(s)</div></div></div>
+    <div class="table-toolbar"><input class="table-search" id="ring-search" placeholder="Search ring summary..."><div class="table-controls-right"><label class="small-note">Rows</label><select class="rows-select" id="ring-rows"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div></div>
+    <div class="table-shell"><div class="table-wrap">
+      <table id="ring-table" class="native-table col-ring-summary sticky-first-col">
+        <thead><tr>{% for c in ring_columns %}<th class="sortable" data-col="{{ c }}">{{ c }}<span class="sort-indicator"></span></th>{% endfor %}</tr></thead>
+        <tbody>
+          {% for row in ring_rows %}
+          <tr>
+            {% for c in ring_columns %}
+            <td class="{% if c == 'TX 1 (Gbps)' or c == 'TX 2 (Gbps)' or c == 'Total TX (Gbps)' or c == 'Max Capacity (Gbps)' or c == 'Util %' or c == 'Peak Util (Gbps)' %}num{% endif %}">
+              {% if c == "Util Band" %}
+                {% with val=row|get_item:c %}
+                  {% if val == "Normal" %}<span class="table-chip util-normal">Normal</span>
+                  {% elif val == "Warning" %}<span class="table-chip util-warning">Warning</span>
+                  {% elif val == "Critical" %}<span class="table-chip util-critical">Critical</span>
+                  {% else %}<span class="table-chip util-nodata">{{ val }}</span>{% endif %}
+                {% endwith %}
+              {% elif c == "Endpoint 1" or c == "Endpoint 2" %}
+                <span class="truncate-1 truncate-endpoint" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+              {% elif c == "Link Instance" %}
+                <span class="truncate-1 truncate-link" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+              {% elif c == "Peak Time" %}
+                <span class="truncate-1 truncate-time" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+              {% else %}
+                <span title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% empty %}
+          <tr><td colspan="{{ ring_columns|length }}" class="empty-state">No data found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div><div class="table-toolbar" style="padding:12px 16px 14px;"><div class="small-note" id="ring-count">{{ ring_row_count }} row(s)</div><div class="pager" id="ring-pager"></div></div></div>
+  </div>
+</div>
+
+<div v-show="activeTab==='g100'">
+  <div class="toolbar-row">
+    <div>
+      <h1 class="page-title" style="font-size:24px; margin:0;">100G Summary</h1>
+      <div class="page-subtitle" style="margin-bottom:0;">Peak utilization for detected 100G links.</div>
+    </div>
+    <div class="btn-row">
+      <button type="button" class="table-chip util-nodata filter-chip-btn" data-table="g100" data-band="All">All</button>
+      <button type="button" class="table-chip util-normal filter-chip-btn" data-table="g100" data-band="Normal">Normal</button>
+      <button type="button" class="table-chip util-warning filter-chip-btn" data-table="g100" data-band="Warning">Warning</button>
+      <button type="button" class="table-chip util-critical filter-chip-btn" data-table="g100" data-band="Critical">Critical</button>
+      <a class="action-btn" href="{% url 'download_excel' %}">Download Excel</a>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-head"><div><h3 class="section-title">100G Summary Table</h3><div class="section-note">{{ g100_count }} row(s)</div></div></div>
+    <div class="table-toolbar"><input class="table-search" id="g100-search" placeholder="Search 100G summary..."><div class="table-controls-right"><label class="small-note">Rows</label><select class="rows-select" id="g100-rows"><option>10</option><option selected>20</option><option>50</option><option>100</option></select></div></div>
+    <div class="table-shell"><div class="table-wrap">
+      <table id="g100-table" class="native-table col-g100-summary sticky-first-col">
+        <thead><tr>{% for c in g100_columns %}<th class="sortable" data-col="{{ c }}">{{ c }}<span class="sort-indicator"></span></th>{% endfor %}</tr></thead>
+        <tbody>
+          {% for row in g100_rows %}
+          <tr>
+            {% for c in g100_columns %}
+            <td class="{% if c == 'TX 1 (Gbps)' or c == 'TX 2 (Gbps)' or c == 'Total TX (Gbps)' or c == 'Max Capacity (Gbps)' or c == 'Util %' or c == 'Peak Util (Gbps)' %}num{% endif %}">
+              {% if c == "Util Band" %}
+                {% with val=row|get_item:c %}
+                  {% if val == "Normal" %}<span class="table-chip util-normal">Normal</span>
+                  {% elif val == "Warning" %}<span class="table-chip util-warning">Warning</span>
+                  {% elif val == "Critical" %}<span class="table-chip util-critical">Critical</span>
+                  {% else %}<span class="table-chip util-nodata">{{ val }}</span>{% endif %}
+                {% endwith %}
+              {% elif c == "100G Link" %}
+                <span class="truncate-1 truncate-g100" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+              {% elif c == "Peak Time" %}
+                <span class="truncate-1 truncate-time" title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+              {% else %}
+                <span title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% empty %}
+          <tr><td colspan="{{ g100_columns|length }}" class="empty-state">No data found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div><div class="table-toolbar" style="padding:12px 16px 14px;"><div class="small-note" id="g100-count">{{ g100_count }} row(s)</div><div class="pager" id="g100-pager"></div></div></div>
+  </div>
+</div>
+
+<div v-show="activeTab==='proof'">
+  <div class="toolbar-row">
+    <div>
+      <h1 class="page-title" style="font-size:24px; margin:0;">Proof / Debug</h1>
+      <div class="page-subtitle" style="margin-bottom:0;">Inspect same-timestamp logic for rings and TX/RX max logic for 100G links.</div>
+    </div>
+    <div class="chip-row">
+      <span class="table-chip util-normal">AJAX</span>
+      <span class="table-chip util-nodata">No page refresh</span>
+    </div>
+  </div>
+  {% include "dashboard/proof_content.html" %}
+</div>
+
+<div class="btn-row" style="margin-top:16px;">
+  <a class="action-btn" href="{% url 'download_excel' %}">Download Excel Summary</a>
+  <a class="action-btn outline" href="{% url 'upload' %}">Back to Upload</a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function makeChart(canvasId, labels, values, labelText) {
+  const el = document.getElementById(canvasId);
+  if (!el || typeof Chart === 'undefined') return;
+  new Chart(el, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: labelText,
+        data: values,
+        backgroundColor: '#FF2C2C',
+        borderColor: '#E02222',
+        borderWidth: 1,
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: '#d7e3ff', maxRotation: 0, minRotation: 0, callback: function(v, i){ const t=labels[i]||''; return t.length > 18 ? t.slice(0,18)+'…' : t; } },
+          grid: { display: false }
+        },
+        y: {
+          ticks: { color: '#d7e3ff' },
+          grid: { color: 'rgba(199,212,242,.16)' }
+        }
+      }
+    }
+  });
+}
+
+function bindProofAjax() {
+  const form = document.getElementById('proof-form');
+  if (!form) return;
+  const debugSelect = form.querySelector('#debug-select');
+  const ringWrap = form.querySelector('#ring-debug-wrap');
+  const g100Wrap = form.querySelector('#g100-debug-wrap');
+
+  function toggleDebugFields() {
+    if (debugSelect && debugSelect.value === 'g100') {
+      if (ringWrap) ringWrap.style.display = 'none';
+      if (g100Wrap) g100Wrap.style.display = '';
+    } else {
+      if (g100Wrap) g100Wrap.style.display = 'none';
+      if (ringWrap) ringWrap.style.display = '';
+    }
+  }
+
+  if (debugSelect) {
+    debugSelect.addEventListener('change', toggleDebugFields);
+    toggleDebugFields();
+  }
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const params = new URLSearchParams(new FormData(form));
+    fetch(form.action + '?' + params.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' }})
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          const root = document.getElementById('proof-root');
+          if (root) root.outerHTML = data.html;
+          bindProofAjax();
+        } else {
+          alert(data.error || 'Failed to load proof data.');
+        }
+      })
+      .catch(() => alert('Failed to load proof data.'));
+  });
+}
+
+function getCellSortValue(row, colIndex) {
+  const cell = row.children[colIndex];
+  if (!cell) return '';
+  const txt = cell.textContent.trim();
+  const num = parseFloat(txt.replace(/,/g, ''));
+  return Number.isFinite(num) && txt.match(/^-?\d+(\.\d+)?$/) ? num : txt.toLowerCase();
+}
+
+function initClientTable(tableId, searchId, pagerId, countId, options={}) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  let rows = Array.from(tbody.querySelectorAll('tr')).filter(r => !r.querySelector('.empty-state'));
+  const searchInput = document.getElementById(searchId);
+  const rowsSelect = document.getElementById(options.rowsSelectId);
+  const pager = document.getElementById(pagerId);
+  const count = document.getElementById(countId);
+  const bandButtons = Array.from(document.querySelectorAll(`[data-table="${options.bandKey || ''}"]`));
+  const headers = Array.from(table.querySelectorAll('thead th.sortable'));
+  let perPage = options.perPage || 20;
+  let search = '';
+  let band = 'All';
+  let page = 1;
+  let sortCol = null;
+  let sortDir = 'asc';
+
+  function rowBand(row) {
+    const chip = row.querySelector('.table-chip');
+    return chip ? chip.textContent.trim() : '';
+  }
+
+  function processedRows() {
+    let out = rows.filter(row => {
+      const txt = row.textContent.toLowerCase();
+      const searchOk = !search || txt.includes(search);
+      const bandOk = !options.enableBand || band === 'All' || rowBand(row) === band;
+      return searchOk && bandOk;
+    });
+
+    if (sortCol !== null) {
+      out = out.slice().sort((a, b) => {
+        const va = getCellSortValue(a, sortCol);
+        const vb = getCellSortValue(b, sortCol);
+        if (va < vb) return sortDir === 'asc' ? -1 : 1;
+        if (va > vb) return sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+    return out;
+  }
+
+  function updateHeaderIndicators() {
+    headers.forEach((th, idx) => {
+      const indicator = th.querySelector('.sort-indicator');
+      if (!indicator) return;
+      indicator.textContent = sortCol === idx ? (sortDir === 'asc' ? '▲' : '▼') : '';
+    });
+  }
+
+  function renderPager(totalPages) {
+    if (!pager) return;
+    let html = `<button type="button" data-prev ${page===1?'disabled':''}>Prev</button>`;
+    const pages = [];
+    for (let n = 1; n <= totalPages; n++) {
+      if (n === 1 || n === totalPages || Math.abs(n - page) <= 1) pages.push(n);
+    }
+    let last = null;
+    for (const n of pages) {
+      if (last && n - last > 1) html += `<span class="small-note">...</span>`;
+      html += `<button type="button" class="${n===page?'active':''}" data-page="${n}">${n}</button>`;
+      last = n;
+    }
+    html += `<button type="button" data-next ${page===totalPages?'disabled':''}>Next</button>`;
+    pager.innerHTML = html;
+    pager.querySelectorAll('[data-page]').forEach(btn => btn.addEventListener('click', () => { page = Number(btn.dataset.page); render(); }));
+    const prev = pager.querySelector('[data-prev]');
+    const next = pager.querySelector('[data-next]');
+    if (prev) prev.addEventListener('click', () => { if (page > 1) { page--; render(); } });
+    if (next) next.addEventListener('click', () => { if (page < totalPages) { page++; render(); } });
+  }
+
+  function render() {
+    const filtered = processedRows();
+    const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+    if (page > totalPages) page = totalPages;
+    const start = (page - 1) * perPage;
+    const pageRows = filtered.slice(start, start + perPage);
+
+    rows.forEach(r => r.style.display = 'none');
+    pageRows.forEach(r => {
+      tbody.appendChild(r);
+      r.style.display = '';
+    });
+
+    if (count) count.textContent = `${filtered.length} row(s)`;
+    renderPager(totalPages);
+    updateHeaderIndicators();
+    bandButtons.forEach(btn => { btn.style.outline = btn.dataset.band === band ? '2px solid #1696D2' : 'none'; });
+  }
+
+  if (searchInput) {
+    searchInput.addEventListener('input', e => {
+      search = e.target.value.trim().toLowerCase();
+      page = 1;
+      render();
+    });
+  }
+
+  if (rowsSelect) {
+    rowsSelect.addEventListener('change', e => {
+      perPage = parseInt(e.target.value, 10) || perPage;
+      page = 1;
+      render();
+    });
+  }
+
+  bandButtons.forEach(btn => btn.addEventListener('click', () => {
+    band = btn.dataset.band;
+    page = 1;
+    render();
+  }));
+
+  headers.forEach((th, idx) => {
+    th.addEventListener('click', () => {
+      if (sortCol === idx) {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortCol = idx;
+        sortDir = 'asc';
+      }
+      render();
+    });
+  });
+
+  render();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  makeChart('ringChart', {{ top10_ring_chart_labels|safe }}, {{ top10_ring_chart_values|safe }}, 'Total TX (Gbps)');
+  makeChart('g100Chart', {{ top10_100g_chart_labels|safe }}, {{ top10_100g_chart_values|safe }}, 'Peak Util (Gbps)');
+  initClientTable('top10-ring-table', 'top10-ring-search', 'top10-ring-pager', 'top10-ring-count', { perPage: 10, rowsSelectId: 'top10-ring-rows', enableBand: false });
+  initClientTable('top10-g100-table', 'top10-g100-search', 'top10-g100-pager', 'top10-g100-count', { perPage: 10, rowsSelectId: 'top10-g100-rows', enableBand: false });
+  initClientTable('ring-table', 'ring-search', 'ring-pager', 'ring-count', { perPage: 20, rowsSelectId: 'ring-rows', enableBand: true, bandKey: 'ring' });
+  initClientTable('g100-table', 'g100-search', 'g100-pager', 'g100-count', { perPage: 20, rowsSelectId: 'g100-rows', enableBand: true, bandKey: 'g100' });
+  bindProofAjax();
+});
+</script>
+{% endblock %}

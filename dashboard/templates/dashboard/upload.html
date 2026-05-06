@@ -1,0 +1,89 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Upload | Ring Portal{% endblock %}
+{% block app_body_class %}no-sidebar{% endblock %}
+{% block content %}
+<div class="upload-shell">
+  <h1 class="page-title">Bandwidth Analytics</h1>
+  <div class="page-subtitle upload-full-note">
+    Upload Huawei CSV / ZIP files first. After calculation, navigation tabs will appear for Dashboard, Ring Summary,
+    100G Summary, and Proof / Debug.
+  </div>
+
+  {% if errors %}
+  <div class="section-card" style="padding:14px 16px; margin-bottom:16px; border-color:#7d3140; background:#5b1f2a; color:#fff;">
+    <ul style="margin:0; padding-left:18px;">{% for err in errors %}<li>{{ err }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <div class="section-card" style="margin-bottom:18px;">
+    <div class="section-head">
+      <div>
+        <h3 class="section-title">Upload Performance Files</h3>
+        <div class="section-note">Drag and drop your CSV / ZIP files into the upload area below, or click to browse.</div>
+      </div>
+    </div>
+
+    <div style="padding:0 16px 18px;">
+      <form method="post" action="{% url 'result' %}" enctype="multipart/form-data" @submit="startUploadAnimation()">
+        {% csrf_token %}
+
+        <div class="vuetify-upload-card">
+          <div class="upload-zone-head">
+            <div class="upload-zone-icon">⬆</div>
+            <div>
+              <div class="upload-zone-title">Drag & Drop Files Here</div>
+              <div class="upload-zone-subtitle">Supported formats: CSV and ZIP. Multiple files are allowed.</div>
+            </div>
+          </div>
+
+          <div class="vuetify-upload-wrap">
+            <v-file-input
+              name="files"
+              label="Drop files here or click to browse"
+              multiple
+              chips
+              show-size
+              prepend-icon="mdi-cloud-upload"
+              variant="outlined"
+              density="comfortable"
+              accept=".csv,.zip"
+              color="primary"
+              bg-color="transparent"
+              clearable
+              counter
+            ></v-file-input>
+          </div>
+
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr; gap:18px; margin-top:18px;">
+          <div>
+            <div class="field-label">Skiprows</div>
+            <div class="field-control">{{ form.skiprows }}</div>
+            <div class="small-note">Rows to skip before actual table header.</div>
+          </div>
+        </div>
+
+        <div style="margin-top:18px;">
+          <button class="action-btn" type="submit" :disabled="uploading">
+            [[ uploading ? 'Processing...' : 'Calculate' ]]
+          </button>
+        </div>
+
+        <div v-show="uploading" style="margin-top:18px;">
+          <div class="small-note" style="margin-bottom:8px;">[[ uploadProgressText ]]</div>
+          <v-progress-linear
+            :model-value="uploadProgress"
+            color="#39A76B"
+            height="16"
+            rounded
+            striped
+          ></v-progress-linear>
+          <div class="small-note" style="margin-top:8px;">[[ uploadProgress ]]%</div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
