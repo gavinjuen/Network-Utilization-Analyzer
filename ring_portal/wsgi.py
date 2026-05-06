@@ -5,7 +5,7 @@ project_home = "/home/gavinjuen/Network-Utilization-Analyzer"
 if project_home not in sys.path:
     sys.path.insert(0, project_home)
 
-os.environ["SECRET_KEY"] = "your-secret-key-here"
+os.environ["SECRET_KEY"] = "gavinjuen-network-utilization-secret-2026"
 os.environ["DEBUG"] = "False"
 os.environ["ALLOWED_HOSTS"] = "gavinjuen.pythonanywhere.com"
 os.environ["CSRF_TRUSTED_ORIGINS"] = "https://gavinjuen.pythonanywhere.com"
