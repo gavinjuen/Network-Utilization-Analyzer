@@ -103,8 +103,9 @@ def _proof_context(df, ring_peaks, g100_peaks, request=None):
         options = []
         for _, row in ring_peaks.iterrows():
             instance = "" if pd.isna(row.get("Link Instance", "")) else str(row.get("Link Instance", ""))
-            label = f"{row['Ring']} | {row['Board Pair']} | {instance if instance else 'Non-UNQ2/U220'}"
-            options.append({"label": label, "ring": str(row["Ring"]), "instance": instance})
+            board_pair = "" if pd.isna(row.get("Board Pair", "")) else str(row.get("Board Pair", ""))
+            label = f"{row['Ring']} | {board_pair} | {instance if instance else 'Non-UNQ2/U220'}"
+            options.append({"label": label, "ring": str(row["Ring"]), "board_pair": board_pair, "instance": instance})
         context["ring_debug_options"] = options
 
     if not g100_peaks.empty:
@@ -129,7 +130,7 @@ def _proof_context(df, ring_peaks, g100_peaks, request=None):
                 selected_label = request.GET.get("ring_label") or context["ring_debug_options"][0]["label"]
                 context["selected_ring_label"] = selected_label
                 match = next((o for o in context["ring_debug_options"] if o["label"] == selected_label), context["ring_debug_options"][0])
-                endpoint_totals, same_time, timestamp_totals = build_ring_proof(df, match["ring"], match["instance"])
+                endpoint_totals, same_time, timestamp_totals = build_ring_proof(df, match["ring"], match.get("board_pair", ""), match["instance"])
                 if not endpoint_totals.empty:
                     endpoint_totals = endpoint_totals.fillna("")
                     same_time = same_time.fillna("")
@@ -148,6 +149,20 @@ def _proof_context(df, ring_peaks, g100_peaks, request=None):
 
 
 def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
+    congested_ring_name = ""
+    congested_ring_value = 0.0
+    if not ring_peaks.empty:
+        congested_ring_row = ring_peaks.sort_values(["Total TX (Gbps)", "Util %"], ascending=[False, False]).iloc[0]
+        congested_ring_name = str(congested_ring_row["Ring"])
+        congested_ring_value = float(congested_ring_row["Total TX (Gbps)"])
+
+    congested_100g_name = ""
+    congested_100g_value = 0.0
+    if not g100_peaks.empty:
+        congested_100g_row = g100_peaks.sort_values(["Peak Util (Gbps)"], ascending=[False]).iloc[0]
+        congested_100g_name = str(congested_100g_row["100G Link"])
+        congested_100g_value = float(congested_100g_row["Peak Util (Gbps)"])
+
     context = {
         "errors": errors or [],
         "ring_columns": list(ring_peaks.columns),
@@ -155,10 +170,11 @@ def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
         "g100_columns": list(g100_peaks.columns),
         "g100_rows": g100_peaks.fillna("").to_dict(orient="records"),
         "ring_count": ring_peaks["Ring"].nunique() if not ring_peaks.empty else 0,
-        "ring_row_count": len(ring_peaks),
         "g100_count": len(g100_peaks),
-        "busiest_ring": float(ring_peaks["Total TX (Gbps)"].max()) if not ring_peaks.empty else 0.0,
-        "busiest_100g": float(g100_peaks["Peak Util (Gbps)"].max()) if not g100_peaks.empty else 0.0,
+        "congested_ring_name": congested_ring_name,
+        "congested_ring_value": congested_ring_value,
+        "congested_100g_name": congested_100g_name,
+        "congested_100g_value": congested_100g_value,
         "top10_ring_columns": ["Ring", "Board Pair", "Link Instance", "Total TX (Gbps)", "Util %", "Util Band"],
         "top10_ring_rows": [],
         "top10_100g_columns": ["100G Link", "Peak Util (Gbps)", "Util Band", "Peak Time"],

@@ -35,28 +35,28 @@
 
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-title">Unique Rings</div>
+      <div class="kpi-title">Total Rings in Network</div>
       <div class="kpi-value">{{ ring_count }}</div>
       <div class="kpi-pill">↗ Active</div>
       <div class="kpi-spark"></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-title">Ring Rows</div>
-      <div class="kpi-value">{{ ring_row_count }}</div>
-      <div class="kpi-pill">↗ Ready</div>
-      <div class="kpi-spark"></div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-title">100G Rows</div>
+      <div class="kpi-title">Total 100G Link in Network</div>
       <div class="kpi-value">{{ g100_count }}</div>
-      <div class="kpi-pill red">↓ Review</div>
+      <div class="kpi-pill">↗ Active</div>
       <div class="kpi-spark red"></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-title">Busiest Ring</div>
-      <div class="kpi-value">{{ busiest_ring|floatformat:3 }} Gbps</div>
-      <div class="kpi-pill">↗ Peak</div>
+      <div class="kpi-title">Congested Ring</div>
+      <div class="kpi-value" style="font-size:16px; line-height:1.35; overflow-wrap:anywhere; word-break:break-word;">{{ congested_ring_name|default:"-" }}</div>
+      <div class="kpi-pill">↗ {{ congested_ring_value|floatformat:3 }} Gbps</div>
       <div class="kpi-spark"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Congested 100G Link</div>
+      <div class="kpi-value" style="font-size:16px; line-height:1.35; overflow-wrap:anywhere; word-break:break-word;">{{ congested_100g_name|default:"-" }}</div>
+      <div class="kpi-pill">↗ {{ congested_100g_value|floatformat:3 }} Gbps</div>
+      <div class="kpi-spark red"></div>
     </div>
   </div>
 

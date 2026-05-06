@@ -768,6 +768,111 @@
       border:1px solid rgba(255,255,255,.12);
     }
 
+    
+    /* Responsive/resizable website tweaks */
+    .content-area{
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .toolbar-row{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+      flex-wrap:wrap;
+    }
+    .page-title,
+    .page-subtitle{
+      word-break: break-word;
+    }
+    .kpi-grid{
+      display:grid;
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
+      gap:16px;
+      width:100%;
+    }
+    .kpi-card{
+      min-width:0;
+      min-height:112px;
+    }
+    .kpi-value{
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+    .split-grid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap:16px;
+      width:100%;
+    }
+    .section-card{
+      min-width:0;
+      box-sizing:border-box;
+    }
+    .chart-wrap, .chart-box{
+      width:100%;
+      overflow:hidden;
+    }
+    .chart-box{
+      min-height:320px;
+    }
+    .native-table-wrap{
+      width:100%;
+      overflow:auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .native-table{
+      min-width:980px;
+    }
+    .page-tabs{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      width:100%;
+    }
+    .page-tab{
+      white-space:nowrap;
+    }
+    @media (max-width: 1200px){
+      .kpi-grid{
+        grid-template-columns: repeat(2, minmax(240px, 1fr));
+      }
+    }
+    @media (max-width: 900px){
+      .split-grid{
+        grid-template-columns: 1fr;
+      }
+      .kpi-grid{
+        grid-template-columns: 1fr;
+      }
+      .chart-box{
+        min-height:280px;
+      }
+    }
+    @media (max-width: 640px){
+      .content-area{
+        padding:16px !important;
+      }
+      .page-title{
+        font-size:22px !important;
+      }
+      .kpi-card{
+        min-height:unset;
+      }
+      .kpi-value{
+        font-size:18px !important;
+        line-height:1.35 !important;
+      }
+      .segmented{
+        width:100%;
+        justify-content:flex-start;
+      }
+      .native-table{
+        min-width:860px;
+      }
+    }
+
     {% block extra_css %}{% endblock %}
   </style>
 
