@@ -283,18 +283,34 @@ def build_100g_peak_summary(df):
 
 def build_ring_proof(df, ring_name, board_pair="", link_instance=""):
     ring_df = df[df["Ring"] == ring_name].dropna(subset=["Collection Time", "TX_bps"]).copy()
-    if board_pair:
-        ring_df = ring_df[ring_df["Board Type"].astype(str) == str(board_pair)].copy()
+
+    # For UNQ2/U220 proof, link instance is the main key.
     if link_instance:
         ring_df = ring_df[ring_df["Link Instance"] == link_instance].copy()
+    elif board_pair:
+        board_parts = [x.strip() for x in str(board_pair).split("/") if x.strip()]
+        ring_df = ring_df[ring_df["Board Type"].astype(str).isin(board_parts)].copy()
+
     if ring_df.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
     endpoint_totals = ring_df.groupby(["Collection Time", "Endpoint"], as_index=False)["TX_bps"].sum()
     endpoint_totals["TX (Gbps)"] = (endpoint_totals["TX_bps"] / 1e9).round(3)
-    timestamp_totals = endpoint_totals.groupby("Collection Time", as_index=False)["TX_bps"].sum().rename(columns={"TX_bps": "Total_TX_bps"})
+
+    timestamp_totals = (
+        endpoint_totals.groupby("Collection Time", as_index=False)["TX_bps"]
+        .sum()
+        .rename(columns={"TX_bps": "Total_TX_bps"})
+    )
     timestamp_totals["Total TX (Gbps)"] = (timestamp_totals["Total_TX_bps"] / 1e9).round(3)
+
     peak_time = timestamp_totals.loc[timestamp_totals["Total_TX_bps"].idxmax(), "Collection Time"]
-    same_time = endpoint_totals[endpoint_totals["Collection Time"] == peak_time].sort_values("TX_bps", ascending=False).reset_index(drop=True)
+    same_time = (
+        endpoint_totals[endpoint_totals["Collection Time"] == peak_time]
+        .sort_values("TX_bps", ascending=False)
+        .reset_index(drop=True)
+    )
+
     return endpoint_totals, same_time, timestamp_totals
 
 def build_100g_proof(df, link_name):
