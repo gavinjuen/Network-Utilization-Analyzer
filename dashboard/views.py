@@ -175,7 +175,7 @@ def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
         "congested_ring_value": congested_ring_value,
         "congested_100g_name": congested_100g_name,
         "congested_100g_value": congested_100g_value,
-        "top10_ring_columns": ["Ring", "Board Pair", "Link Instance", "Total TX (Gbps)", "Util %", "Util Band"],
+        "top10_ring_columns": ["Ring","Board Pair", "Link Instance","Total TX (Gbps)","Avg Endpoint 1 (Gbps)","Avg Endpoint 2 (Gbps)","Total Avg (Gbps)","Peak Average Ratio","Util %","Util Band",],
         "top10_ring_rows": [],
         "top10_100g_columns": ["100G Link", "Peak Util (Gbps)", "Util Band", "Peak Time"],
         "top10_100g_rows": [],

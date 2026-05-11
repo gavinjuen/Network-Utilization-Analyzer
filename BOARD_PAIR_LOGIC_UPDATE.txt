@@ -1,1 +1,0 @@
-pytpUpdated logic:\n- Same ring name is now calculated separately by Board Pair.\n- Example: RING A | EX10 and RING A | UNS4MP are treated as separate rows.\n- Proof / Debug dropdown also follows Ring + Board Pair + Link Instance.\n
