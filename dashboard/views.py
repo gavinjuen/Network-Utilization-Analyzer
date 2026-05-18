@@ -343,13 +343,11 @@ def result_view(request):
             request=request
         )
 
-        context["top10_ring_weekly"] = top10_ring_weekly_trend()
-
-        context["top10_ring_weekly_chart"] = json.dumps(
-    top10_current_table_ring_chart_data(
-        context["top10_ring_rows"]
-    )
-)
+        ##context["top10_ring_weekly_chart"] = json.dumps(
+    #top10_current_table_ring_chart_data(
+       # context["top10_ring_rows"]
+    #)
+#)
         return render(request, "dashboard/result.html", context)
 
     df, ring_peaks, g100_peaks = _load_results(request)
@@ -359,23 +357,23 @@ def result_view(request):
             return redirect("upload")
         context = _build_context(df, ring_peaks, g100_peaks, request=None)
         context["errors"] = ["Showing latest saved database result. Proof/debug requires re-upload in the current session."]
-        context["top10_ring_weekly"] = top10_ring_weekly_trend()
-        context["top10_ring_weekly_chart"] = json.dumps(
-    top10_current_table_ring_chart_data(
-        context["top10_ring_rows"]
-    )
-)
+        #context["top10_ring_weekly"] = top10_ring_weekly_trend()
+       # context["top10_ring_weekly_chart"] = json.dumps(
+   # top10_current_table_ring_chart_data(
+        #context["top10_ring_rows"]
+    #)
+#)
 
         return render(request, "dashboard/result.html", context)
     context = _build_context(df, ring_peaks, g100_peaks, request=request)
+    #to enable for weekly line chjart
+    #context["top10_ring_weekly"] = top10_ring_weekly_trend()
 
-    context["top10_ring_weekly"] = top10_ring_weekly_trend()
-
-    context["top10_ring_weekly_chart"] = json.dumps(
-    top10_current_table_ring_chart_data(
-        context["top10_ring_rows"]
-    )
-)
+    #context["top10_ring_weekly_chart"] = json.dumps(
+    #top10_current_table_ring_chart_data(
+     #   context["top10_ring_rows"]
+    #)
+#)
     return render(request, "dashboard/result.html", context)
 
 
@@ -458,12 +456,12 @@ def weekly_trend_view(request):
 
 
         if pd.isna(peak_time):
-            print("BAD PEAK TIME:", repr(row.peak_time))
+            #print("BAD PEAK TIME:", repr(row.peak_time))
             continue
         iso_year, iso_week, _ = peak_time.isocalendar()
         week_label = f"{iso_year}-W{iso_week:02d}"
         value = getattr(row, metric_field, 0) or 0
-        print("PARSED:", peak_time, "WEEK:", week_label, "VALUE:", value)
+        #print("PARSED:", peak_time, "WEEK:", week_label, "VALUE:", value)
         weekly_data[week_label].append(float(value))
 
     labels = []
@@ -496,12 +494,12 @@ def weekly_trend_view(request):
         "metric_label": metric_label,
     }
 
-    print("Trend type:", trend_type)
-    print("Selected item:", selected_item)
-    print("Items:", items[:5])
-    print("Labels:", labels)
-    print("Values:", values)
-    print("RAW PEAK TIME:", repr(row.peak_time))
+    #print("Trend type:", trend_type)
+   # print("Selected item:", selected_item)
+   # print("Items:", items[:5])
+   # print("Labels:", labels)
+   # print("Values:", values)
+   # print("RAW PEAK TIME:", repr(row.peak_time))
     return render(request, "dashboard/weekly_trend.html", context)
 
 def proof_data_view(request):

@@ -215,7 +215,11 @@ def read_uploaded_files(uploaded_files, skiprows):
 
 def prepare_dataframe(combined):
     combined = combined.copy()
-    combined["Collection Time"] = pd.to_datetime(combined["Collection Time"], dayfirst=True, errors="coerce")
+    combined["Collection Time"] = pd.to_datetime(
+    combined["Collection Time"],
+    format="%Y-%m-%d %H:%M:%S",
+    errors="coerce"
+)
     combined["TX_bps"] = combined["TXBPS(bit/s)"].apply(parse_bps)
     combined["RX_bps"] = combined["RXBPS(bit/s)"].apply(parse_bps)
     combined["MAX_bps"] = combined[["TX_bps", "RX_bps"]].max(axis=1)
