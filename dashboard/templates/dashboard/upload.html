@@ -64,10 +64,12 @@
           </div>
         </div>
 
-        <div style="margin-top:18px;">
+        <div class="btn-row" style="margin-top:18px;">
           <button class="action-btn" type="submit" :disabled="uploading">
             [[ uploading ? 'Processing...' : 'Calculate' ]]
           </button>
+          <a class="action-btn outline" href="{% url 'result' %}">Latest Saved Result</a>
+          <a class="action-btn outline" href="{% url 'weekly_trend' %}">Weekly Trend</a>
         </div>
 
         <div v-show="uploading" style="margin-top:18px;">

@@ -40,22 +40,50 @@ def extract_endpoint(resource_name):
     return text
 
 def extract_source_site(resource_name):
-    return extract_endpoint(resource_name)
+    if not resource_name:
+        return ""
+
+    text = str(resource_name).strip()
+
+    # take only the part before "[100G LINK] TO"
+    marker = "[100G LINK] TO"
+    upper_text = text.upper()
+    pos = upper_text.find(marker)
+    left_part = text[:pos].strip() if pos != -1 else text
+
+    # remove trailing MAC info
+    mac_pos = left_part.upper().find("-MAC")
+    if mac_pos != -1:
+        left_part = left_part[:mac_pos].strip()
+
+    # try to capture site name before shelf/subrack/board details
+    # example: "...7181-D_KINGFISHER_58 & M_SAMC & C_KINGFISHER_1800 V PRO-Shelf0(subrack)-6-K1UNS5..."
+    site_match = re.search(r"([A-Z0-9_& ]+?)(?:-SHELF\\d|\\-\\d+\\-K\\d|\\(SUBRACK\\))", left_part, re.IGNORECASE)
+    if site_match:
+        return site_match.group(1).strip(" -")
+
+    return left_part.strip(" -")
 
 def extract_sink_site(resource_name):
     if not resource_name:
         return ""
+
     text = str(resource_name)
     upper_text = text.upper()
     marker = "[100G LINK] TO"
     start = upper_text.find(marker)
     if start == -1:
         return ""
+
     sink_part = text[start + len(marker):].strip()
+
     mac_pos = sink_part.upper().find("-MAC")
     if mac_pos != -1:
         sink_part = sink_part[:mac_pos].strip()
-    return sink_part.strip().strip(" )-")
+
+    sink_part = sink_part.strip().strip(")- ")
+
+    return sink_part
 
 def extract_100g_link_name(resource_name):
     source = extract_source_site(resource_name)
@@ -199,6 +227,7 @@ def prepare_dataframe(combined):
     combined["Board Type"] = combined["Resource Name"].apply(detect_board_type)
     combined["Link Instance"] = combined["Resource Name"].apply(extract_link_instance)
     combined["Service Group"] = combined["Resource Name"].apply(extract_service_group)
+    
     return combined
 
 def get_board_pair_label(group_df):
@@ -401,40 +430,6 @@ def build_ring_peak_summary(df):
             ep2 = same_time_grp.iloc[1]["Endpoint"] if len(same_time_grp) >= 2 else ""
             tx2 = float(same_time_grp.iloc[1]["TX_bps"]) if len(same_time_grp) >= 2 else 0.0
 
-            if ring == "[RING_LHDT03]":
-                ep1_rows = ring_grp[ring_grp["Endpoint"] == ep1].copy()
-                ep2_rows = ring_grp[ring_grp["Endpoint"] == ep2].copy()
-
-                print("=" * 100)
-                print("RING DEBUG")
-                print("Ring:", ring)
-                print("Peak Time:", peak_time)
-                print("Endpoint 1:", ep1)
-                print("Endpoint 2:", ep2)
-                print("TX 1 (Gbps):", round(tx1 / 1e9, 3))
-                print("TX 2 (Gbps):", round(tx2 / 1e9, 3))
-                print("Total TX (Gbps):", round((tx1 + tx2) / 1e9, 3))
-
-                print("\nEndpoint 1 rows:")
-                print(ep1_rows[["Collection Time", "Endpoint", "TX_bps"]].to_string(index=False))
-
-                print("\nEndpoint 2 rows:")
-                print(ep2_rows[["Collection Time", "Endpoint", "TX_bps"]].to_string(index=False))
-
-                avg_ep1 = ep1_rows["TX_bps"].mean() / 1e9 if not ep1_rows.empty else 0
-                avg_ep2 = ep2_rows["TX_bps"].mean() / 1e9 if not ep2_rows.empty else 0
-                final_avg = avg_ep1 + avg_ep2
-
-                print("\nAverage check:")
-                print("Avg Endpoint 1 (Gbps):", round(avg_ep1, 3))
-                print("Avg Endpoint 2 (Gbps):", round(avg_ep2, 3))
-                print("Final Average (Gbps):", round(final_avg, 3))
-
-                print("\nPeak Average Ratio check:")
-                par = ((tx1 + tx2) / 1e9) / final_avg if final_avg > 0 else 0
-                print("PAR:", round(par, 2))
-                print("=" * 100)
-
             total = tx1 + tx2
             endpoint_means = ring_grp.groupby("Endpoint", as_index=False)["TX_bps"].mean()
             avg_ep1_bps = float(
@@ -477,15 +472,63 @@ def build_ring_peak_summary(df):
     
 def build_100g_peak_summary(df):
     g100_df = df[df["100G Link"] != ""].dropna(subset=["Collection Time", "MAX_bps"]).copy()
-    if g100_df.empty:
-        return pd.DataFrame(columns=["100G Link", "Source Site", "Sink Site", "Peak Time", "Peak Util (Gbps)", "Util Band"])
-    grouped = g100_df.groupby(["100G Link", "Source Site", "Sink Site", "Collection Time"], as_index=False)["MAX_bps"].sum()
-    idx = grouped.groupby("100G Link")["MAX_bps"].idxmax()
-    peaks = grouped.loc[idx].copy().sort_values("MAX_bps", ascending=False)
-    peaks["Peak Util (Gbps)"] = (peaks["MAX_bps"] / 1e9).round(3)
-    peaks["Util Band"] = peaks["Peak Util (Gbps)"].apply(util_band_100g)
-    return peaks[["100G Link", "Source Site", "Sink Site", "Collection Time", "Peak Util (Gbps)", "Util Band"]].rename(columns={"Collection Time": "Peak Time"})
 
+    output_columns = [
+        "100G Link",
+        "Source Site",
+        "Sink Site",
+        "Peak Time",
+        "Peak Util (Gbps)",
+        "Average Util (Gbps)",
+        "Peak Average Ratio",
+        "Util Band",
+    ]
+
+    if g100_df.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    grouped = g100_df.groupby(
+        ["100G Link", "Source Site", "Sink Site", "Collection Time"],
+        as_index=False
+    )["MAX_bps"].sum()
+
+    result_rows = []
+
+    for (link_name, source_site, sink_site), grp in grouped.groupby(
+        ["100G Link", "Source Site", "Sink Site"]
+    ):
+        if grp.empty:
+            continue
+
+        grp = grp.sort_values("MAX_bps", ascending=False).reset_index(drop=True)
+        peak_row = grp.iloc[0]
+
+        max_bps_series = pd.to_numeric(grp["MAX_bps"], errors="coerce")
+        peak_bps = float(max_bps_series.iloc[0]) if not max_bps_series.empty else 0.0  
+        avg_bps = float(max_bps_series.mean()) if not max_bps_series.empty else 0.0
+        par = (peak_bps / avg_bps) if avg_bps > 0 else 0.0
+
+        result_rows.append({
+            "100G Link": link_name,
+            "Source Site": source_site,
+            "Sink Site": sink_site,
+            "Peak Time": peak_row["Collection Time"],
+            "Peak Util (Gbps)": round(peak_bps / 1e9, 3),
+            "Average Util (Gbps)": round(avg_bps / 1e9, 3),
+            "Peak Average Ratio": round(par, 2),
+            "Util Band": util_band_100g(peak_bps / 1e9),
+        })
+
+    if not result_rows:
+        return pd.DataFrame(columns=output_columns)
+
+    peaks = pd.DataFrame(result_rows)
+
+    return peaks[output_columns].sort_values(
+        ["Peak Util (Gbps)", "100G Link"],
+        ascending=[False, True]
+    ).reset_index(drop=True)
+    
 def build_ring_proof(df, ring_name, board_pair="", link_instance=""):
     ring_df = df[df["Ring"] == ring_name].dropna(subset=["Collection Time", "TX_bps"]).copy()
     if link_instance:

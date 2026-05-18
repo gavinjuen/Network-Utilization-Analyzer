@@ -16,6 +16,7 @@
   <button type="button" class="page-tab" :class="{active: activeTab==='ring'}" @click="activeTab='ring'">Ring Summary</button>
   <button type="button" class="page-tab" :class="{active: activeTab==='g100'}" @click="activeTab='g100'">100G Summary</button>
   <button type="button" class="page-tab" :class="{active: activeTab==='proof'}" @click="activeTab='proof'">Proof / Debug</button>
+  <a class="page-tab" href="{% url 'weekly_trend' %}">Weekly Trend</a>
 </div>
 
 {% if errors %}
@@ -35,31 +36,46 @@
 
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-title">Total Rings in Network</div>
+      <div class="kpi-title">Unique Rings</div>
       <div class="kpi-value">{{ ring_count }}</div>
       <div class="kpi-pill">↗ Active</div>
       <div class="kpi-spark"></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-title">Total 100G Link in Network</div>
-      <div class="kpi-value">{{ g100_count }}</div>
-      <div class="kpi-pill">↗ Active</div>
-      <div class="kpi-spark red"></div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-title">Congested Ring</div>
-      <div class="kpi-value" style="font-size:16px; line-height:1.35; overflow-wrap:anywhere; word-break:break-word;">{{ congested_ring_name|default:"-" }}</div>
-      <div class="kpi-pill">↗ {{ congested_ring_value|floatformat:3 }} Gbps</div>
+      <div class="kpi-title">Ring Rows</div>
+      <div class="kpi-value">{{ ring_row_count }}</div>
+      <div class="kpi-pill">↗ Ready</div>
       <div class="kpi-spark"></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-title">Congested 100G Link</div>
-      <div class="kpi-value" style="font-size:16px; line-height:1.35; overflow-wrap:anywhere; word-break:break-word;">{{ congested_100g_name|default:"-" }}</div>
-      <div class="kpi-pill">↗ {{ congested_100g_value|floatformat:3 }} Gbps</div>
+      <div class="kpi-title">100G Rows</div>
+      <div class="kpi-value">{{ g100_count }}</div>
+      <div class="kpi-pill red">↓ Review</div>
       <div class="kpi-spark red"></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-title">Busiest Ring</div>
+      <div class="kpi-value">{{ busiest_ring|floatformat:3 }} Gbps</div>
+      <div class="kpi-pill">↗ Peak</div>
+      <div class="kpi-spark"></div>
+    </div>
+</div>
+<div class="section-card" style="margin-top:18px;">
+  <div class="section-head">
+    <div>
+      <h3 class="section-title">Weekly Ring Trend</h3>
+      <div class="section-note">
+        Showing Top-10 weekly rings. Click ring to focus.
+      </div>
     </div>
   </div>
 
+  <div class="chart-wrap">
+    <div class="chart-box" style="height:420px;">
+      <canvas id="weeklyRingTrendChart"></canvas>
+    </div>
+  </div>
+</div>
   <div class="split-grid">
     <div class="section-card">
       <div class="section-head">
@@ -105,7 +121,23 @@
                     {% else %}<span class="table-chip util-nodata">{{ val }}</span>{% endif %}
                   {% endwith %}
                 {% else %}
-                  <span title="{{ row|get_item:c }}">{{ row|get_item:c }}</span>
+                 {% if c == "Ring" %}
+                  <a href="#"
+                    class="weekly-ring-link"
+                    data-ring="{{ row|get_item:c }}"
+                    style="color:#66b3ff;text-decoration:none;font-weight:600">
+
+                    {{ row|get_item:c }}
+
+                  </a>
+
+                  {% else %}
+
+                  <span title="{{ row|get_item:c }}">
+                      {{ row|get_item:c }}
+                  </span>
+
+{% endif %}
                 {% endif %}
               </td>
               {% endfor %}
@@ -284,6 +316,7 @@
 
 {% block extra_js %}
 <script>
+
 function makeChart(canvasId, labels, values, labelText) {
   const el = document.getElementById(canvasId);
   if (!el || typeof Chart === 'undefined') return;
@@ -497,6 +530,106 @@ function initClientTable(tableId, searchId, pagerId, countId, options={}) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+  let weeklyRingChart = null;
+
+const initialData =
+{{ top10_ring_weekly_chart|default:'{"labels":[],"datasets":[]}'|safe }};
+
+const canvas =
+document.getElementById(
+"weeklyRingTrendChart"
+);
+
+if (
+    canvas &&
+    typeof Chart !== "undefined"
+){
+
+weeklyRingChart =
+new Chart(canvas,{
+
+type:'line',
+
+data:{
+labels:initialData.labels,
+datasets:initialData.datasets
+},
+
+options:{
+responsive:true,
+maintainAspectRatio:false,
+
+plugins:{
+legend:{
+position:'bottom'
+}
+},
+
+interaction:{
+mode:'index',
+intersect:false
+},
+
+scales:{
+y:{
+beginAtZero:true
+}
+}
+}
+
+});
+
+}
+
+document
+.querySelectorAll(".weekly-ring-link")
+.forEach(link=>{
+
+link.addEventListener(
+"click",
+function(e){
+
+e.preventDefault();
+
+const ring=
+this.dataset.ring;
+
+fetch(
+`/api/ring-trend/?ring=${encodeURIComponent(ring)}`
+)
+
+.then(r=>r.json())
+
+.then(data=>{
+
+weeklyRingChart.data.labels=
+data.labels;
+
+weeklyRingChart.data.datasets=[{
+
+label:ring,
+
+data:data.values,
+
+borderWidth:3,
+
+pointRadius:5,
+
+tension:0.3,
+
+fill:false
+
+}];
+
+weeklyRingChart.update();
+
+});
+
+});
+
+});
+
+
   makeChart('ringChart', {{ top10_ring_chart_labels|safe }}, {{ top10_ring_chart_values|safe }}, 'Total TX (Gbps)');
   makeChart('g100Chart', {{ top10_100g_chart_labels|safe }}, {{ top10_100g_chart_values|safe }}, 'Peak Util (Gbps)');
   initClientTable('top10-ring-table', 'top10-ring-search', 'top10-ring-pager', 'top10-ring-count', { perPage: 10, rowsSelectId: 'top10-ring-rows', enableBand: false });
