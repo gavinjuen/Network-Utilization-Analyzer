@@ -5,8 +5,8 @@
 <div class="upload-shell">
   <h1 class="page-title">Bandwidth Analytics</h1>
   <div class="page-subtitle upload-full-note">
-    Upload Huawei CSV / ZIP files first. After calculation, navigation tabs will appear for Dashboard, Ring Summary,
-    100G Summary, and Proof / Debug.
+    Upload Huawei CSV / ZIP performance files. After calculation, navigation tabs will appear for Dashboard, Ring Summary,
+    100G Summary, Service Summary, and Proof / Debug.
   </div>
 
   {% if errors %}
@@ -24,8 +24,12 @@
     </div>
 
     <div style="padding:0 16px 18px;">
-      <form method="post" action="{% url 'result' %}" enctype="multipart/form-data" @submit="startUploadAnimation()">
+      <form method="post" action="{% url 'result' %}" enctype="multipart/form-data" @submit="validateUpload">
         {% csrf_token %}
+
+        <div v-if="uploadError" style="padding:12px 14px; margin-bottom:14px; border:1px solid #7d3140; background:#5b1f2a; color:#fff; border-radius:12px;">
+          [[ uploadError ]]
+        </div>
 
         <div class="vuetify-upload-card">
           <div class="upload-zone-head">
@@ -38,6 +42,7 @@
 
           <div class="vuetify-upload-wrap">
             <v-file-input
+              v-model="selectedFiles"
               name="files"
               label="Drop files here or click to browse"
               multiple
@@ -53,7 +58,6 @@
               counter
             ></v-file-input>
           </div>
-
         </div>
 
         <div style="display:grid; grid-template-columns: 1fr; gap:18px; margin-top:18px;">
@@ -66,10 +70,17 @@
 
         <div class="btn-row" style="margin-top:18px;">
           <button class="action-btn" type="submit" :disabled="uploading">
+            <i class="mdi mdi-calculator-variant-outline"></i>
             [[ uploading ? 'Processing...' : 'Calculate' ]]
           </button>
-          <a class="action-btn outline" href="{% url 'result' %}">Latest Saved Result</a>
-          <a class="action-btn outline" href="{% url 'weekly_trend' %}">Weekly Trend</a>
+
+          <a class="action-btn outline" href="{% url 'result' %}">
+            <i class="mdi mdi-file-chart-outline"></i>Latest Saved Result
+          </a>
+
+          <a class="action-btn outline" href="{% url 'weekly_trend' %}">
+            <i class="mdi mdi-chart-line"></i>Weekly Trend
+          </a>
         </div>
 
         <div v-show="uploading" style="margin-top:18px;">
@@ -86,6 +97,5 @@
       </form>
     </div>
   </div>
-
 </div>
 {% endblock %}

@@ -21,11 +21,22 @@ from .forms import UploadFilesForm
 from .models import UploadRun, RingSummary, Link100GSummary
 from .calculations import (
     read_uploaded_files, prepare_dataframe, build_ring_peak_summary,
-    build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes
+    build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes,build_service_peak_summary
 )
 
 CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
+def parse_huawei_datetime(value):
 
+    if pd.isna(value):
+        return pd.NaT
+
+    value = str(value).strip().strip("'").strip('"')
+
+    return pd.to_datetime(
+        value,
+        dayfirst=True,
+        errors="coerce"
+    )
 
 def _safe_float(value, default=0.0):
     try:
@@ -47,7 +58,7 @@ def _save_analysis_to_db(files, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFra
             ring=str(row.get("Ring", "")),
             board_pair=str(row.get("Board Pair", "")),
             link_instance=str(row.get("Link Instance", "")),
-            peak_time=str(row.get("Peak Time", "")),
+            peak_time=row.get("Peak Time"),
             endpoint_1=str(row.get("Endpoint 1", "")),
             tx_1_gbps=_safe_float(row.get("TX 1 (Gbps)", 0)),
             endpoint_2=str(row.get("Endpoint 2", "")),
@@ -71,7 +82,7 @@ def _save_analysis_to_db(files, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFra
             link_name=str(row.get("100G Link", "")),
             source_site=str(row.get("Source Site", "")),
             sink_site=str(row.get("Sink Site", "")),
-            peak_time=str(row.get("Peak Time", "")),
+            peak_time=row.get("Peak Time"),
             peak_util_gbps=_safe_float(row.get("Peak Util (Gbps)", 0)),
             average_util_gbps=_safe_float(row.get("Average Util (Gbps)", 0)),
             peak_average_ratio=_safe_float(row.get("Peak Average Ratio", 0)),
@@ -218,12 +229,23 @@ def _proof_context(df, ring_peaks, g100_peaks, request=None):
         options = []
         for _, row in ring_peaks.iterrows():
             instance = "" if pd.isna(row.get("Link Instance", "")) else str(row.get("Link Instance", ""))
-            label = f"{row['Ring']} | {row['Board Pair']} | {instance if instance else 'Non-UNQ2/U220'}"
-            options.append({"label": label, "ring": str(row["Ring"]), "instance": instance})
+            board_pair = "" if pd.isna(row.get("Board Pair", "")) else str(row.get("Board Pair", ""))
+
+            label = f"{row['Ring']} | {board_pair} | {instance if instance else 'Non-UNQ2/U220'}"
+
+            options.append({
+                "label": label,
+                "ring": str(row["Ring"]),
+                "board_pair": board_pair,
+                "instance": instance,
+            })
+
         context["ring_debug_options"] = options
 
     if not g100_peaks.empty:
-        context["g100_debug_options"] = [str(v) for v in g100_peaks["100G Link"].dropna().tolist()]
+        context["g100_debug_options"] = [
+            str(v) for v in g100_peaks["100G Link"].dropna().tolist()
+        ]
 
     if request is not None:
         debug_type = request.GET.get("debug", "ring")
@@ -232,37 +254,84 @@ def _proof_context(df, ring_peaks, g100_peaks, request=None):
         if debug_type == "g100" and context["g100_debug_options"]:
             selected_link = request.GET.get("g100_link") or context["g100_debug_options"][0]
             context["selected_g100_link"] = selected_link
+
             proof_100g = build_100g_proof(df, selected_link)
+
             if not proof_100g.empty:
                 proof_100g = proof_100g.fillna("")
-                cols = ["Collection Time", "100G Link", "TX (Gbps)", "RX (Gbps)", "Selected Max TX/RX (Gbps)", "Resource Name", "Source File"]
+                cols = [
+                    "Collection Time",
+                    "100G Link",
+                    "TX (Gbps)",
+                    "RX (Gbps)",
+                    "Selected Max TX/RX (Gbps)",
+                    "Resource Name",
+                    "Source File",
+                ]
                 context["proof_g100_columns"] = cols
                 context["proof_g100_rows"] = proof_100g[cols].to_dict(orient="records")
+
         else:
             context["selected_debug_type"] = "ring"
+
             if context["ring_debug_options"]:
                 selected_label = request.GET.get("ring_label") or context["ring_debug_options"][0]["label"]
                 context["selected_ring_label"] = selected_label
-                match = next((o for o in context["ring_debug_options"] if o["label"] == selected_label), context["ring_debug_options"][0])
-                endpoint_totals, same_time, timestamp_totals = build_ring_proof(df, match["ring"], match["instance"])
+
+                match = next(
+                    (o for o in context["ring_debug_options"] if o["label"] == selected_label),
+                    context["ring_debug_options"][0]
+                )
+
+                endpoint_totals, same_time, timestamp_totals = build_ring_proof(
+                    df,
+                    match["ring"],
+                    match["board_pair"],
+                    match["instance"],
+                )
+
                 if not endpoint_totals.empty:
                     endpoint_totals = endpoint_totals.fillna("")
                     same_time = same_time.fillna("")
                     timestamp_totals = timestamp_totals.fillna("")
-                    context["proof_ring_endpoint_columns"] = ["Collection Time", "Endpoint", "TX (Gbps)"]
-                    context["proof_ring_endpoint_rows"] = endpoint_totals[context["proof_ring_endpoint_columns"]].to_dict(orient="records")
-                    context["proof_ring_timestamp_columns"] = ["Collection Time", "Total TX (Gbps)"]
-                    context["proof_ring_timestamp_rows"] = timestamp_totals[context["proof_ring_timestamp_columns"]].to_dict(orient="records")
-                    context["proof_ring_same_time_columns"] = ["Collection Time", "Endpoint", "TX (Gbps)"]
-                    context["proof_ring_same_time_rows"] = same_time[context["proof_ring_same_time_columns"]].to_dict(orient="records")
+
+                    context["proof_ring_endpoint_columns"] = [
+                        "Collection Time",
+                        "Endpoint",
+                        "TX (Gbps)",
+                    ]
+                    context["proof_ring_endpoint_rows"] = endpoint_totals[
+                        context["proof_ring_endpoint_columns"]
+                    ].to_dict(orient="records")
+
+                    context["proof_ring_timestamp_columns"] = [
+                        "Collection Time",
+                        "Total TX (Gbps)",
+                    ]
+                    context["proof_ring_timestamp_rows"] = timestamp_totals[
+                        context["proof_ring_timestamp_columns"]
+                    ].to_dict(orient="records")
+
+                    context["proof_ring_same_time_columns"] = [
+                        "Collection Time",
+                        "Endpoint",
+                        "TX (Gbps)",
+                    ]
+                    context["proof_ring_same_time_rows"] = same_time[
+                        context["proof_ring_same_time_columns"]
+                    ].to_dict(orient="records")
+
                     try:
-                        context["proof_ring_step3_total"] = round(float(same_time["TX (Gbps)"].sum()), 3)
+                        context["proof_ring_step3_total"] = round(
+                            float(same_time["TX (Gbps)"].sum()),
+                            3
+                        )
                     except Exception:
                         context["proof_ring_step3_total"] = None
+
     return context
 
-
-def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
+def _build_context(df, ring_peaks, g100_peaks, service_peaks=None, errors=None, request=None):
     context = {
         "errors": errors or [],
         "ring_columns": list(ring_peaks.columns),
@@ -274,7 +343,7 @@ def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
         "g100_count": len(g100_peaks),
         "busiest_ring": float(ring_peaks["Total TX (Gbps)"].max()) if not ring_peaks.empty else 0.0,
         "busiest_100g": float(g100_peaks["Peak Util (Gbps)"].max()) if not g100_peaks.empty else 0.0,
-        "top10_ring_columns": ["Ring", "Board Pair", "Link Instance", "Total TX (Gbps)", "Util %", "Util Band"],
+        "top10_ring_columns": ["Ring", "Board Pair", "Total TX (Gbps)", "Util %", "Util Band"],
         "top10_ring_rows": [],
         "top10_100g_columns": ["100G Link", "Peak Util (Gbps)", "Average Util (Gbps)", "Peak Average Ratio", "Util Band", "Peak Time"],
         "top10_100g_rows": [],
@@ -282,6 +351,9 @@ def _build_context(df, ring_peaks, g100_peaks, errors=None, request=None):
         "top10_ring_chart_values": [],
         "top10_100g_chart_labels": [],
         "top10_100g_chart_values": [],
+        "service_columns": list(service_peaks.columns) if service_peaks is not None else [],
+        "service_rows": service_peaks.fillna("").to_dict(orient="records") if service_peaks is not None else [],
+        "service_count": len(service_peaks) if service_peaks is not None else 0,
     }
 
     if not ring_peaks.empty:
@@ -331,17 +403,19 @@ def result_view(request):
 
         ring_peaks = build_ring_peak_summary(df)
         g100_peaks = build_100g_peak_summary(df)
+        service_peaks = build_service_peak_summary(df)
 
         _save_analysis_to_db(files, ring_peaks, g100_peaks)
         _store_results(request, df, ring_peaks, g100_peaks)
 
         context = _build_context(
-            df,
-            ring_peaks,
-            g100_peaks,
-            errors=errors,
-            request=request
-        )
+    df,
+    ring_peaks,
+    g100_peaks,
+    service_peaks,
+    errors=errors,
+    request=request
+)
 
         ##context["top10_ring_weekly_chart"] = json.dumps(
     #top10_current_table_ring_chart_data(
@@ -451,9 +525,7 @@ def weekly_trend_view(request):
     
     for row in qs:
         raw_peak_time = str(row.peak_time).strip().strip("'").strip('"')
-        peak_time = pd.to_datetime(raw_peak_time, 
-                                  errors="coerce")
-
+        peak_time = pd.to_datetime(raw_peak_time, errors="coerce")
 
         if pd.isna(peak_time):
             #print("BAD PEAK TIME:", repr(row.peak_time))
@@ -518,12 +590,7 @@ def top10_ring_weekly_trend():
 
     for row in qs:
         raw_peak_time = str(row.peak_time).strip().strip("'").strip('"')
-
-        peak_time = pd.to_datetime(
-            raw_peak_time,
-            errors="coerce"
-        )
-
+        peak_time = pd.to_datetime(raw_peak_time, errors="coerce")
         if pd.isna(peak_time):
             continue
 
@@ -672,14 +739,25 @@ def top10_current_table_ring_chart_data(top10_ring_rows):
 
 def download_excel_view(request):
     df, ring_peaks, g100_peaks = _load_results(request)
+
     if df is None:
         return redirect("upload")
-    excel_bytes = to_excel_bytes(ring_peaks, g100_peaks)
+
+    service_peaks = build_service_peak_summary(df)
+
+    excel_bytes = to_excel_bytes(
+        ring_peaks,
+        g100_peaks,
+        service_peaks
+    )
+
     response = HttpResponse(
         excel_bytes,
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    response["Content-Disposition"] = 'attachment; filename="ring_100g_summary.xlsx"'
+
+    response["Content-Disposition"] = 'attachment; filename="ring_100g_service_summary.xlsx"'
+
     return response
 
 def ring_trend_api(request):

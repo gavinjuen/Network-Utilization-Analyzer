@@ -45,22 +45,16 @@ def extract_source_site(resource_name):
 
     text = str(resource_name).strip()
 
-    # take only the part before "[100G LINK] TO"
+    # For 100G link, take left side before [100G LINK] TO
     marker = "[100G LINK] TO"
     upper_text = text.upper()
     pos = upper_text.find(marker)
     left_part = text[:pos].strip() if pos != -1 else text
 
-    # remove trailing MAC info
-    mac_pos = left_part.upper().find("-MAC")
-    if mac_pos != -1:
-        left_part = left_part[:mac_pos].strip()
-
-    # try to capture site name before shelf/subrack/board details
-    # example: "...7181-D_KINGFISHER_58 & M_SAMC & C_KINGFISHER_1800 V PRO-Shelf0(subrack)-6-K1UNS5..."
-    site_match = re.search(r"([A-Z0-9_& ]+?)(?:-SHELF\\d|\\-\\d+\\-K\\d|\\(SUBRACK\\))", left_part, re.IGNORECASE)
-    if site_match:
-        return site_match.group(1).strip(" -")
+    # Remove anything from -Shelf onward
+    shelf_pos = left_part.upper().find("-SHELF")
+    if shelf_pos != -1:
+        left_part = left_part[:shelf_pos].strip()
 
     return left_part.strip(" -")
 
@@ -84,6 +78,17 @@ def extract_sink_site(resource_name):
     sink_part = sink_part.strip().strip(")- ")
 
     return sink_part
+
+def extract_service_name(resource_name):
+    text = str(resource_name).upper()
+
+
+    # Detect DIGI DROP W / DIGI DROP (W) / DIGI DROP P / DIGI DROP (P)
+    m = re.search(r"\b([A-Z0-9_]+)\s+DROP\s*\(?([WP])\)?\b", text)
+    if m:
+        return f"{m.group(1)} DROP {m.group(2)}"
+
+    return ""
 
 def extract_100g_link_name(resource_name):
     source = extract_source_site(resource_name)
@@ -215,6 +220,8 @@ def read_uploaded_files(uploaded_files, skiprows):
 
 def prepare_dataframe(combined):
     combined = combined.copy()
+    
+
     combined["Collection Time"] = pd.to_datetime(
     combined["Collection Time"],
     errors="coerce"
@@ -237,7 +244,11 @@ def prepare_dataframe(combined):
     combined["Board Type"] = combined["Resource Name"].apply(detect_board_type)
     combined["Link Instance"] = combined["Resource Name"].apply(extract_link_instance)
     combined["Service Group"] = combined["Resource Name"].apply(extract_service_group)
-    
+    combined["Service Name"] = combined["Resource Name"].apply(extract_service_name)
+    print(
+    combined["Collection Time"]
+    .head(20)
+)
     return combined
 
 def get_board_pair_label(group_df):
@@ -276,6 +287,73 @@ def calculate_group_capacity(group_df):
         capacities.append(10)
 
     return float(min(capacities) if capacities else 10)
+
+def build_service_peak_summary(df):
+    service_df = df[df["Service Name"] != ""].dropna(
+        subset=["Collection Time", "Resource Name", "TX_bps", "RX_bps"]
+    ).copy()
+
+    output_columns = [
+        "Service Name",
+        "Resource Name",
+        "Peak Time",
+        "TX (Gbps)",
+        "RX (Gbps)",
+        "Peak Direction",
+    ]
+
+    if service_df.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    service_df["TX_bps"] = pd.to_numeric(
+        service_df["TX_bps"], errors="coerce"
+    ).fillna(0)
+
+    service_df["RX_bps"] = pd.to_numeric(
+        service_df["RX_bps"], errors="coerce"
+    ).fillna(0)
+
+    service_df["MAX_bps"] = service_df[
+        ["TX_bps", "RX_bps"]
+    ].max(axis=1)
+
+    # Sort biggest first
+    service_df = service_df.sort_values(
+        "MAX_bps",
+        ascending=False
+    )
+
+    # Take highest row for each service+resource
+    result = (
+        service_df
+        .groupby(
+            ["Service Name", "Resource Name"],
+            as_index=False
+        )
+        .first()
+    )
+
+    result["Peak Time"] = result["Collection Time"]
+
+    result["TX (Gbps)"] = (
+        result["TX_bps"]/1e9
+    ).round(3)
+
+    result["RX (Gbps)"] = (
+        result["RX_bps"]/1e9
+    ).round(3)
+
+    result["Peak Direction"] = result.apply(
+        lambda x:
+        "TX"
+        if x["TX_bps"] >= x["RX_bps"]
+        else "RX",
+        axis=1
+    )
+
+    return result[output_columns].sort_values(
+        ["Service Name","Resource Name"]
+    ).reset_index(drop=True)
 
 def build_ring_peak_summary(df):
     ring_df = df[df["Ring"] != ""].dropna(subset=["Collection Time", "TX_bps"]).copy()
@@ -348,6 +426,11 @@ def build_ring_peak_summary(df):
                     .sort_values("TX_bps", ascending=False)
                     .reset_index(drop=True)
                 )
+                peak_time = pd.to_datetime(
+                        peak_time,
+                        dayfirst=True,
+                        errors="coerce"
+                    )
 
                 ep1 = same_time_grp.iloc[0]["Endpoint"] if len(same_time_grp) >= 1 else ""
                 tx1 = float(same_time_grp.iloc[0]["TX_bps"]) if len(same_time_grp) >= 1 else 0.0
@@ -540,32 +623,83 @@ def build_100g_peak_summary(df):
     ).reset_index(drop=True)
     
 def build_ring_proof(df, ring_name, board_pair="", link_instance=""):
-    ring_df = df[df["Ring"] == ring_name].dropna(subset=["Collection Time", "TX_bps"]).copy()
-    if link_instance:
-        ring_df = ring_df[ring_df["Link Instance"] == link_instance].copy()
-    elif board_pair:
-        if str(board_pair) == "E224/EX10":
+    ring_df = df[df["Ring"].astype(str) == str(ring_name)].dropna(
+        subset=["Collection Time", "TX_bps"]
+    ).copy()
+
+    if ring_df.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    # 1) Filter board pair first
+    if board_pair:
+        board_pair_text = str(board_pair)
+
+        if board_pair_text == "E224/EX10":
             ring_df = ring_df[ring_df["Board Type"].astype(str).isin(["E224", "EX10"])].copy()
-        elif str(board_pair) == "U402/UNS4MP":
+
+        elif board_pair_text == "U402/UNS4MP":
             ring_df = ring_df[ring_df["Board Type"].astype(str).isin(["U402", "UNS4MP"])].copy()
-        elif str(board_pair) == "EX2/EM20":
+
+        elif board_pair_text == "EX2/EM20":
             ring_df = ring_df[ring_df["Board Type"].astype(str).isin(["EX2", "EM20"])].copy()
-        elif str(board_pair).startswith("U220/UNQ2 (") and str(board_pair).endswith(")"):
-            fallback_group = str(board_pair)[len("U220/UNQ2 ("):-1]
+
+        elif board_pair_text.startswith("U220/UNQ2 (") and board_pair_text.endswith(")"):
+            fallback_group = board_pair_text[len("U220/UNQ2 ("):-1]
+
             ring_df = ring_df[
                 ring_df["Board Type"].astype(str).isin(["U220", "UNQ2"]) &
                 (ring_df["Service Group"].astype(str) == fallback_group)
             ].copy()
+
+        elif board_pair_text in ["U220/UNQ2", "UNQ2/U220"]:
+            ring_df = ring_df[
+                ring_df["Board Type"].astype(str).isin(["U220", "UNQ2"])
+            ].copy()
+
+        elif board_pair_text == "UNQ2/UNQ2":
+            ring_df = ring_df[
+                ring_df["Board Type"].astype(str) == "UNQ2"
+            ].copy()
+
         else:
-            ring_df = ring_df[ring_df["Board Type"].astype(str) == str(board_pair)].copy()
+            ring_df = ring_df[
+                ring_df["Board Type"].astype(str) == board_pair_text
+            ].copy()
+
+    # 2) Then filter link instance
+    if link_instance:
+        ring_df = ring_df[
+            ring_df["Link Instance"].astype(str) == str(link_instance)
+        ].copy()
+
     if ring_df.empty:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    endpoint_totals = ring_df.groupby(["Collection Time", "Endpoint"], as_index=False)["TX_bps"].sum()
+
+    endpoint_totals = ring_df.groupby(
+        ["Collection Time", "Endpoint"],
+        as_index=False
+    )["TX_bps"].sum()
+
     endpoint_totals["TX (Gbps)"] = (endpoint_totals["TX_bps"] / 1e9).round(3)
-    timestamp_totals = endpoint_totals.groupby("Collection Time", as_index=False)["TX_bps"].sum().rename(columns={"TX_bps": "Total_TX_bps"})
-    timestamp_totals["Total TX (Gbps)"] = (timestamp_totals["Total_TX_bps"] / 1e9).round(3)
-    peak_time = timestamp_totals.loc[timestamp_totals["Total_TX_bps"].idxmax(), "Collection Time"]
-    same_time = endpoint_totals[endpoint_totals["Collection Time"] == peak_time].sort_values("TX_bps", ascending=False).reset_index(drop=True)
+
+    timestamp_totals = endpoint_totals.groupby(
+        "Collection Time",
+        as_index=False
+    )["TX_bps"].sum().rename(columns={"TX_bps": "Total_TX_bps"})
+
+    timestamp_totals["Total TX (Gbps)"] = (
+        timestamp_totals["Total_TX_bps"] / 1e9
+    ).round(3)
+
+    peak_time = timestamp_totals.loc[
+        timestamp_totals["Total_TX_bps"].idxmax(),
+        "Collection Time"
+    ]
+
+    same_time = endpoint_totals[
+        endpoint_totals["Collection Time"] == peak_time
+    ].sort_values("TX_bps", ascending=False).reset_index(drop=True)
+
     return endpoint_totals, same_time, timestamp_totals
 
 def build_100g_proof(df, link_name):
@@ -578,10 +712,15 @@ def build_100g_proof(df, link_name):
     proof["Selected Max TX/RX (Gbps)"] = (proof["MAX_bps"] / 1e9).round(3)
     return proof.sort_values("Selected Max TX/RX (Gbps)", ascending=False)
 
-def to_excel_bytes(ring_peaks, g100_peaks):
+def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None):
     output = io.BytesIO()
+
     with pd.ExcelWriter(output, engine="xlsxwriter", datetime_format="dd/mm/yyyy hh:mm") as writer:
         ring_peaks.to_excel(writer, sheet_name="Ring_Peak_Summary", index=False)
         g100_peaks.to_excel(writer, sheet_name="100G_Peak_Summary", index=False)
+
+        if service_peaks is not None:
+            service_peaks.to_excel(writer, sheet_name="Service_Peak_Summary", index=False)
+
     output.seek(0)
     return output.getvalue()
