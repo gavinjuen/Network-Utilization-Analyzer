@@ -15,6 +15,17 @@
 
   
   <style>
+
+    [v-cloak]{
+      display:none !important;
+    }
+
+    html,
+    body,
+    #app{
+      background:#f5f5f5 !important;
+      min-height:100%;
+    }
     :root{
       --page-bg:#f5f5f5;
       --app-bg:#f5f5f5;
@@ -34,6 +45,7 @@
       --table-row:#ffffff;
       --table-row-alt:#fafafa;
     }
+    
     html, body, #app { min-height:100%; margin:0; }
     body {
       background: var(--page-bg);
@@ -795,15 +807,78 @@ button.action-btn, a.action-btn{
 
 </style>
 
+<style>
+.top-bar, .top-bar * { color: #ffffff !important; }
+.action-btn, .action-btn * { color: #ffffff !important; }
+.page-tab.active { color:#ffffff !important; }
+.partner-logo{
+  background: rgba(255,255,255,.12) !important;
+  border:1px solid rgba(255,255,255,.18) !important;
+}
+.brand-title{
+  color:#ffffff !important;
+}
+.section-title, .page-title{
+  color:#212121 !important;
+}
+.page-subtitle, .section-note, .small-note, .proof-note, .proof-note-inline, .field-label{
+  color:#6b7280 !important;
+}
+.kpi-title{
+  color:#6b7280 !important;
+}
+.kpi-value{
+  color:#212121 !important;
+}
+.filter-chip-btn{
+  background:#ffffff !important;
+  border:1px solid #d1d5db !important;
+  color:#212121 !important;
+}
+.filter-chip-btn.active-chip{
+  background:#1976D2 !important;
+  color:#ffffff !important;
+  border-color:#1976D2 !important;
+}
+.table-chip.util-all{
+  background:#e5e7eb !important; color:#374151 !important; border-color:#d1d5db !important;
+}
+.table-chip.util-normal{
+  background:#e8f5e9 !important; color:#2e7d32 !important; border-color:#a5d6a7 !important;
+}
+.table-chip.util-warning{
+  background:#fff3e0 !important; color:#ef6c00 !important; border-color:#ffcc80 !important;
+}
+.table-chip.util-critical{
+  background:#ffebee !important; color:#c62828 !important; border-color:#ef9a9a !important;
+}
+.vuetify-upload-card{
+  background:#ffffff !important;
+  border:1px dashed #90caf9 !important;
+}
+.upload-zone-title{ color:#212121 !important; }
+.upload-zone-subtitle, .upload-hint-text { color:#6b7280 !important; }
+.upload-zone-icon{
+  background:#e3f2fd !important;
+  color:#1976D2 !important;
+  border-color:#bbdefb !important;
+}
+.upload-hint-box{
+  background:#fafafa !important;
+  border-color:#e0e0e0 !important;
+}
+.upload-hint-title{ color:#212121 !important; }
+</style>
+
 </head>
 <body>
-<div id="app">
+<div id="app" v-cloak>
   <v-app theme="light">
     <div class="app-stage">
       <div class="top-bar">
         <div class="top-left">
           <div class="brand-logo">
-            <img src="{% static 'dashboard/img/huawei_custom_logo.png' %}" alt="Huawei">
+            <img src="{% static 'dashboard/img/logo.png' %}" alt="Huawei">
           </div>
           <div class="brand-title">{% block brand_title %}Network Utilization Analyzer{% endblock %}</div>
         </div>
@@ -905,67 +980,3 @@ app.mount('#app');
 {% block extra_js %}{% endblock %}
 </body>
 </html>
-
-
-<style>
-.top-bar, .top-bar * { color: #ffffff !important; }
-.action-btn, .action-btn * { color: #ffffff !important; }
-.page-tab.active { color:#ffffff !important; }
-.partner-logo{
-  background: rgba(255,255,255,.12) !important;
-  border:1px solid rgba(255,255,255,.18) !important;
-}
-.brand-title{
-  color:#ffffff !important;
-}
-.section-title, .page-title{
-  color:#212121 !important;
-}
-.page-subtitle, .section-note, .small-note, .proof-note, .proof-note-inline, .field-label{
-  color:#6b7280 !important;
-}
-.kpi-title{
-  color:#6b7280 !important;
-}
-.kpi-value{
-  color:#212121 !important;
-}
-.filter-chip-btn{
-  background:#ffffff !important;
-  border:1px solid #d1d5db !important;
-  color:#212121 !important;
-}
-.filter-chip-btn.active-chip{
-  background:#1976D2 !important;
-  color:#ffffff !important;
-  border-color:#1976D2 !important;
-}
-.table-chip.util-all{
-  background:#e5e7eb !important; color:#374151 !important; border-color:#d1d5db !important;
-}
-.table-chip.util-normal{
-  background:#e8f5e9 !important; color:#2e7d32 !important; border-color:#a5d6a7 !important;
-}
-.table-chip.util-warning{
-  background:#fff3e0 !important; color:#ef6c00 !important; border-color:#ffcc80 !important;
-}
-.table-chip.util-critical{
-  background:#ffebee !important; color:#c62828 !important; border-color:#ef9a9a !important;
-}
-.vuetify-upload-card{
-  background:#ffffff !important;
-  border:1px dashed #90caf9 !important;
-}
-.upload-zone-title{ color:#212121 !important; }
-.upload-zone-subtitle, .upload-hint-text { color:#6b7280 !important; }
-.upload-zone-icon{
-  background:#e3f2fd !important;
-  color:#1976D2 !important;
-  border-color:#bbdefb !important;
-}
-.upload-hint-box{
-  background:#fafafa !important;
-  border-color:#e0e0e0 !important;
-}
-.upload-hint-title{ color:#212121 !important; }
-</style>

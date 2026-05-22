@@ -12,4 +12,5 @@ urlpatterns = [
     views.ring_trend_api,
     name="ring_trend_api"
     ),
+    path("ring-nodes/", views.ring_nodes_view, name="ring_nodes")
 ]

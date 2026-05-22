@@ -18,10 +18,10 @@ import json
 import pandas as pd
 from .models import RingSummary, Link100GSummary
 from .forms import UploadFilesForm
-from .models import UploadRun, RingSummary, Link100GSummary
+from .models import UploadRun, RingSummary, Link100GSummary, RingNodeMapping
 from .calculations import (
     read_uploaded_files, prepare_dataframe, build_ring_peak_summary,
-    build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes,build_service_peak_summary
+    build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes,build_service_peak_summary, normalize_ring_name, normalize_board_pair
 )
 
 CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
@@ -369,7 +369,10 @@ def _build_context(df, ring_peaks, g100_peaks, service_peaks=None, errors=None, 
         context["top10_100g_chart_labels"] = [str(v) for v in top10_100g["100G Link"].tolist()]
         context["top10_100g_chart_values"] = [float(v) for v in top10_100g["Peak Util (Gbps)"].tolist()]
     
-    context.update(_proof_context(df, ring_peaks, g100_peaks, request=request))
+    if request and request.GET.get("debug"):
+        context.update(_proof_context(df,ring_peaks,g100_peaks,request=request))
+    else :
+        context.update(_proof_context(df, ring_peaks, g100_peaks, request=None))
     return context
 
 
@@ -402,6 +405,26 @@ def result_view(request):
         del raw_df
 
         ring_peaks = build_ring_peak_summary(df)
+        ring_peaks["Node Count"] = 0
+
+        for idx, row in ring_peaks.iterrows():
+            norm_ring = normalize_ring_name(row.get("Ring", ""))
+            norm_board = normalize_board_pair(row.get("Board Pair", ""))
+
+            nodes = set()
+
+            mappings = RingNodeMapping.objects.filter(
+                normalized_ring=norm_ring,
+                normalized_board_pair=norm_board
+            )
+
+            for m in mappings:
+                if m.source_ne:
+                    nodes.add(m.source_ne)
+                if m.sink_ne:
+                    nodes.add(m.sink_ne)
+
+            ring_peaks.at[idx, "Node Count"] = len(nodes)
         g100_peaks = build_100g_peak_summary(df)
         service_peaks = build_service_peak_summary(df)
 
@@ -744,11 +767,13 @@ def download_excel_view(request):
         return redirect("upload")
 
     service_peaks = build_service_peak_summary(df)
+    ring_node_details = build_ring_node_detail(ring_peaks)
 
     excel_bytes = to_excel_bytes(
         ring_peaks,
         g100_peaks,
-        service_peaks
+        service_peaks,
+        ring_node_details
     )
 
     response = HttpResponse(
@@ -810,3 +835,48 @@ def ring_trend_api(request):
         "labels":labels,
         "values":values
     })
+
+####new added 23rd may
+def ring_nodes_view(request):
+    ring = request.GET.get("ring", "")
+    board_pair = request.GET.get("board_pair", "")
+
+    norm_ring = normalize_ring_name(ring)
+    norm_board = normalize_board_pair(board_pair)
+
+    rows = RingNodeMapping.objects.filter(
+        normalized_ring=norm_ring,
+        normalized_board_pair=norm_board
+    ).values("source_ne", "sink_ne")
+
+    return JsonResponse({
+        "ring": ring,
+        "board_pair": board_pair,
+        "rows": list(rows),
+    })
+
+
+def build_ring_node_detail(ring_peaks):
+    rows = []
+
+    for _, row in ring_peaks.iterrows():
+        ring = str(row.get("Ring", ""))
+        board_pair = str(row.get("Board Pair", ""))
+
+        norm_ring = normalize_ring_name(ring)
+        norm_board = normalize_board_pair(board_pair)
+
+        mappings = RingNodeMapping.objects.filter(
+            normalized_ring=norm_ring,
+            normalized_board_pair=norm_board
+        )
+
+        for m in mappings:
+            rows.append({
+                "Ring": ring,
+                "Board Pair": board_pair,
+                "Source NE": m.source_ne,
+                "Sink NE": m.sink_ne,
+            })
+
+    return pd.DataFrame(rows)

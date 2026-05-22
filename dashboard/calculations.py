@@ -135,6 +135,8 @@ def detect_board_type(resource_name):
         return "EX2"
     if "EM20" in text:
         return "EM20"
+    if "HUNS3" in text:
+        return "HUNS3"
     return "OTHER"
 
 def extract_link_instance(resource_name):
@@ -260,15 +262,33 @@ def get_board_pair_label(group_df):
     # Only merge known mixed pairings that are intended to be one logical ring.
     if board_set == {"E224", "EX10"}:
         return "E224/EX10"
+    if board_set == {"E224", "EM20"}:
+        return "E224/EM20"
     if board_set == {"U402", "UNS4MP"}:
         return "U402/UNS4MP"
     if board_set == {"EX2", "EM20"}:
         return "EX2/EM20"
+    if board_set == {"EX10", "EX2"}:
+        return "EX10/EX2"
+    if board_set == {"EX10", "HUNS3"}:
+        return "EX10/HUNS3"
     # Otherwise keep a single board type label when possible.
     if len(board_types) == 1:
         return board_types[0]
     # For unexpected mixed groups, keep them visible instead of hiding them.
     return "/".join(board_types)
+
+### new added 23rd may
+def normalize_ring_name(value):
+    text = str(value).strip().upper()
+    text = text.replace("[", "").replace("]", "")
+    text = re.sub(r"\.\d+$", "", text)
+    return text
+
+##### new added 23rd may
+def normalize_board_pair(value):
+    parts = [p.strip().upper() for p in str(value).split("/") if p.strip()]
+    return "/".join(sorted(parts))
 
 def calculate_group_capacity(group_df):
     board_types = set(group_df["Board Type"].dropna().astype(str))
@@ -483,8 +503,14 @@ def build_ring_peak_summary(df):
                 return "E224/EX10"
             if board_type in {"U402", "UNS4MP"} and ring_types.issuperset({"U402", "UNS4MP"}):
                 return "U402/UNS4MP"
+            if board_type in {"E224", "EM20"} and ring_types.issuperset({"E224", "EM20"}):
+                return "E224/EM20"
             if board_type in {"EX2", "EM20"} and ring_types.issuperset({"EX2", "EM20"}):
                 return "EX2/EM20"
+            if board_type in {"EX2", "EX10"} and ring_types.issuperset({"EX2", "EX10"}):
+                return "EX10/EX2"
+            if board_type in {"HUNS3", "EX10"} and ring_types.issuperset({"HUNS3", "EX10"}):
+                return "EX10/HUNS3"
             return board_type
 
         ring_type_map = (
@@ -640,6 +666,11 @@ def build_ring_proof(df, ring_name, board_pair="", link_instance=""):
         elif board_pair_text == "U402/UNS4MP":
             ring_df = ring_df[ring_df["Board Type"].astype(str).isin(["U402", "UNS4MP"])].copy()
 
+        elif board_pair_text == "EX2/EX10":
+            ring_df = ring_df[
+                ring_df["Board Type"].astype(str).isin(["EX2", "EX10"])
+            ].copy()
+
         elif board_pair_text == "EX2/EM20":
             ring_df = ring_df[ring_df["Board Type"].astype(str).isin(["EX2", "EM20"])].copy()
 
@@ -712,7 +743,7 @@ def build_100g_proof(df, link_name):
     proof["Selected Max TX/RX (Gbps)"] = (proof["MAX_bps"] / 1e9).round(3)
     return proof.sort_values("Selected Max TX/RX (Gbps)", ascending=False)
 
-def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None):
+def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ring_node_details=None):
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="xlsxwriter", datetime_format="dd/mm/yyyy hh:mm") as writer:
@@ -722,5 +753,35 @@ def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None):
         if service_peaks is not None:
             service_peaks.to_excel(writer, sheet_name="Service_Peak_Summary", index=False)
 
+        if ring_node_details is not None:
+            ring_node_details.to_excel(writer, sheet_name="Ring_Node_Detail", index=False)
+
+            workbook = writer.book
+            ring_ws = writer.sheets["Ring_Peak_Summary"]
+
+            ring_col = ring_peaks.columns.get_loc("Ring")
+            node_sheet_name = "Ring_Node_Detail"
+
+            for row_idx, row in ring_peaks.iterrows():
+                ring_value = str(row.get("Ring", ""))
+                board_pair = str(row.get("Board Pair", ""))
+
+                match_df = ring_node_details[
+                    (ring_node_details["Ring"].astype(str) == ring_value) &
+                    (ring_node_details["Board Pair"].astype(str) == board_pair)
+                ]
+
+                if not match_df.empty:
+                    excel_row = row_idx + 1
+                    target_row = match_df.index[0] + 2
+
+                    ring_ws.write_url(
+                        excel_row,
+                        ring_col,
+                        f"internal:'{node_sheet_name}'!A{target_row}",
+                        string=ring_value
+                    )
+
     output.seek(0)
     return output.getvalue()
+

@@ -45,3 +45,14 @@ class Link100GSummary(models.Model):
     
     def __str__(self):
         return f"{self.link_name} | {self.peak_util_gbps}Gbps"
+
+class RingNodeMapping(models.Model):
+    link_group_name = models.CharField(max_length=255)
+    normalized_ring = models.CharField(max_length=255, db_index=True)
+    board_pair = models.CharField(max_length=100, blank=True)
+    normalized_board_pair = models.CharField(max_length=100, db_index=True)
+    source_ne = models.CharField(max_length=255)
+    sink_ne = models.CharField(max_length=255)
+
+    def __str__(self):
+        return f"{self.normalized_ring} | {self.normalized_board_pair}"
