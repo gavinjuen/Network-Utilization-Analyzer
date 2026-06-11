@@ -37,9 +37,12 @@ class UploadFilesForm(forms.Form):
         initial=6,
         help_text="Rows to skip before actual table header.",
     )
+<<<<<<< HEAD
 
 
 class RingMappingUploadForm(forms.Form):
     mapping_file = forms.FileField(
         label="Ring Node Mapping Excel"
     )
+=======
+>>>>>>> 8b9639c90970a071277371a377a1459287eaa723

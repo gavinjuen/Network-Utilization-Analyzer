@@ -12,6 +12,10 @@ urlpatterns = [
     views.ring_trend_api,
     name="ring_trend_api"
     ),
+<<<<<<< HEAD
     path("ring-nodes/", views.ring_nodes_view, name="ring_nodes"),
     path("upload-ring-mapping/", views.upload_ring_mapping_view, name="upload_ring_mapping")
+=======
+    path("ring-nodes/", views.ring_nodes_view, name="ring_nodes")
+>>>>>>> 8b9639c90970a071277371a377a1459287eaa723
 ]
