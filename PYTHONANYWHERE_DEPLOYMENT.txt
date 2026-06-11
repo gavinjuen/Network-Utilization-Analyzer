@@ -1,0 +1,33 @@
+PythonAnywhere-ready package
+
+1) Clone or upload this project to PythonAnywhere
+2) Create virtualenv:
+   mkvirtualenv --python=/usr/bin/python3.11 mysite-venv
+   workon mysite-venv
+3) Install:
+   pip install -r requirements.txt
+4) Run:
+   python manage.py migrate
+   python manage.py collectstatic --noinput
+
+WSGI file example:
+
+import os
+import sys
+
+project_home = "/home/YOUR_USERNAME/YOUR_REPO"
+if project_home not in sys.path:
+    sys.path.insert(0, project_home)
+
+os.environ["SECRET_KEY"] = "your-secret-key-here"
+os.environ["DEBUG"] = "False"
+os.environ["ALLOWED_HOSTS"] = "YOUR_USERNAME.pythonanywhere.com"
+os.environ["CSRF_TRUSTED_ORIGINS"] = "https://YOUR_USERNAME.pythonanywhere.com"
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ring_portal.settings")
+
+from django.core.wsgi import get_wsgi_application
+application = get_wsgi_application()
+
+Static files:
+URL /static/  -> /home/YOUR_USERNAME/YOUR_REPO/staticfiles
+URL /media/   -> /home/YOUR_USERNAME/YOUR_REPO/media
