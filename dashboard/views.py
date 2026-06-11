@@ -17,21 +17,13 @@ from collections import defaultdict
 import json
 import pandas as pd
 from .models import RingSummary, Link100GSummary
-<<<<<<< HEAD
-from .forms import UploadFilesForm,RingMappingUploadForm
-=======
-from .forms import UploadFilesForm
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723
+from .forms import UploadFilesForm, RingMappingUploadForm
 from .models import UploadRun, RingSummary, Link100GSummary, RingNodeMapping
 from .calculations import (
     read_uploaded_files, prepare_dataframe, build_ring_peak_summary,
     build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes,build_service_peak_summary, normalize_ring_name, normalize_board_pair
 )
-<<<<<<< HEAD
-from .forms import UploadFilesForm, RingMappingUploadForm
 from django.contrib import messages
-=======
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723
 
 CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
 def parse_huawei_datetime(value):
@@ -55,7 +47,6 @@ def _safe_float(value, default=0.0):
     except Exception:
         return default
 
-<<<<<<< HEAD
 def upload_ring_mapping_view(request):
     form = RingMappingUploadForm()
 
@@ -104,8 +95,6 @@ def upload_ring_mapping_view(request):
                 )
 
     return redirect("upload")
-=======
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723
 
 def _save_analysis_to_db(files, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame) -> UploadRun:
     file_name = ", ".join([getattr(f, "name", str(f)) for f in files]) or "Unknown upload"
@@ -844,10 +833,7 @@ def download_excel_view(request):
     response["Content-Disposition"] = 'attachment; filename="ring_100g_service_summary.xlsx"'
 
     return response
-<<<<<<< HEAD
-=======
 
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723
 def ring_trend_api(request):
 
     ring = request.GET.get("ring","")
@@ -922,15 +908,12 @@ def ring_nodes_view(request):
 def build_ring_node_detail(ring_peaks):
     rows = []
 
-<<<<<<< HEAD
     if ring_peaks is None or ring_peaks.empty:
         return pd.DataFrame(
             rows,
             columns=["Ring", "Board Pair", "Source NE", "Sink NE"]
         )
 
-=======
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723
     for _, row in ring_peaks.iterrows():
         ring = str(row.get("Ring", ""))
         board_pair = str(row.get("Board Pair", ""))
@@ -951,11 +934,7 @@ def build_ring_node_detail(ring_peaks):
                 "Sink NE": m.sink_ne,
             })
 
-<<<<<<< HEAD
     return pd.DataFrame(
         rows,
         columns=["Ring", "Board Pair", "Source NE", "Sink NE"]
     )
-=======
-    return pd.DataFrame(rows)
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723

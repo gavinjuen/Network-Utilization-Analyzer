@@ -753,7 +753,6 @@ def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ring_node_details
         if service_peaks is not None:
             service_peaks.to_excel(writer, sheet_name="Service_Peak_Summary", index=False)
 
-<<<<<<< HEAD
         valid_node_detail = (
             ring_node_details is not None
             and not ring_node_details.empty
@@ -768,16 +767,6 @@ def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ring_node_details
             ring_ws = writer.sheets["Ring_Peak_Summary"]
             node_sheet_name = "Ring_Node_Detail"
             ring_col = ring_peaks.columns.get_loc("Ring")
-=======
-        if ring_node_details is not None:
-            ring_node_details.to_excel(writer, sheet_name="Ring_Node_Detail", index=False)
-
-            workbook = writer.book
-            ring_ws = writer.sheets["Ring_Peak_Summary"]
-
-            ring_col = ring_peaks.columns.get_loc("Ring")
-            node_sheet_name = "Ring_Node_Detail"
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723
 
             for row_idx, row in ring_peaks.iterrows():
                 ring_value = str(row.get("Ring", ""))
@@ -800,9 +789,4 @@ def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ring_node_details
                     )
 
     output.seek(0)
-<<<<<<< HEAD
     return output.getvalue()
-=======
-    return output.getvalue()
-
->>>>>>> 8b9639c90970a071277371a377a1459287eaa723
