@@ -18,10 +18,12 @@ import json
 import pandas as pd
 from .models import RingSummary, Link100GSummary
 from .forms import UploadFilesForm, RingMappingUploadForm
-from .models import UploadRun, RingSummary, Link100GSummary, RingNodeMapping
+from .models import UploadRun, RingSummary, Link100GSummary, RingNodeMapping,FTTHSummary
 from .calculations import (
     read_uploaded_files, prepare_dataframe, build_ring_peak_summary,
-    build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes,build_service_peak_summary, normalize_ring_name, normalize_board_pair
+    build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes,
+    build_service_peak_summary, build_ftth_peak_summary, normalize_ring_name,
+    normalize_board_pair
 )
 from django.contrib import messages
 
@@ -96,7 +98,7 @@ def upload_ring_mapping_view(request):
 
     return redirect("upload")
 
-def _save_analysis_to_db(files, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame) -> UploadRun:
+def _save_analysis_to_db(files, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame,ftth_peaks: pd.DataFrame = None) -> UploadRun:
     file_name = ", ".join([getattr(f, "name", str(f)) for f in files]) or "Unknown upload"
     upload_run = UploadRun.objects.create(file_name=file_name)
 
@@ -140,52 +142,85 @@ def _save_analysis_to_db(files, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFra
     if g100_objects:
         Link100GSummary.objects.bulk_create(g100_objects, batch_size=500)
 
+    if ftth_peaks is not None and not ftth_peaks.empty:
+        ftth_objects = []
+
+    for _, row in ftth_peaks.fillna("").iterrows():
+        ftth_objects.append(FTTHSummary(
+            upload_run=upload_run,
+            olt_name=str(row.get("OLT Name", "")),
+            peak_time=row.get("Peak Time"),
+            peak_util_gbps=_safe_float(row.get("Peak Util (Gbps)", 0)),
+            average_util_gbps=_safe_float(row.get("Average Util (Gbps)", 0)),
+            peak_direction=str(row.get("Peak Direction", "")),
+        ))
+
+    if ftth_objects:
+        FTTHSummary.objects.bulk_create(ftth_objects, batch_size=500)
+
     return upload_run
 
 
 def _latest_db_results():
     latest_run = UploadRun.objects.order_by("-uploaded_at").first()
+
     if not latest_run:
         return None, None, None
 
     ring_rows = []
-    for row in RingSummary.objects.filter(upload_run=latest_run).values():
+
+    for row in RingSummary.objects.filter(upload_run=latest_run):
         ring_rows.append({
-            "Ring": row.get("ring", ""),
-            "Board Pair": row.get("board_pair", ""),
-            "Link Instance": row.get("link_instance", ""),
-            "Peak Time": row.get("peak_time", ""),
-            "Endpoint 1": row.get("endpoint_1", ""),
-            "TX 1 (Gbps)": row.get("tx_1_gbps", 0),
-            "Endpoint 2": row.get("endpoint_2", ""),
-            "TX 2 (Gbps)": row.get("tx_2_gbps", 0),
-            "Total TX (Gbps)": row.get("total_tx_gbps", 0),
-            "Avg Endpoint 1 (Gbps)": row.get("avg_endpoint_1_gbps", 0),
-            "Avg Endpoint 2 (Gbps)": row.get("avg_endpoint_2_gbps", 0),
-            "Total Avg (Gbps)": row.get("total_avg_gbps", 0),
-            "Peak Average Ratio": row.get("peak_average_ratio", 0),
-            "Max Capacity (Gbps)": row.get("max_capacity_gbps", 0),
-            "Util %": row.get("util_percent", 0),
-            "Util Band": row.get("util_band", ""),
+            "Ring": row.ring,
+            "Board Pair": row.board_pair,
+            "Link Instance": row.link_instance,
+            "Peak Time": row.peak_time,
+            "Endpoint 1": row.endpoint_1,
+            "TX 1 (Gbps)": row.tx_1_gbps,
+            "Endpoint 2": row.endpoint_2,
+            "TX 2 (Gbps)": row.tx_2_gbps,
+            "Total TX (Gbps)": row.total_tx_gbps,
+            "Avg Endpoint 1 (Gbps)": row.avg_endpoint_1_gbps,
+            "Avg Endpoint 2 (Gbps)": row.avg_endpoint_2_gbps,
+            "Total Avg (Gbps)": row.total_avg_gbps,
+            "Peak Average Ratio": row.peak_average_ratio,
+            "Max Capacity (Gbps)": row.max_capacity_gbps,
+            "Util %": row.util_percent,
+            "Util Band": row.util_band,
         })
 
     g100_rows = []
-    for row in Link100GSummary.objects.filter(upload_run=latest_run).values():
-        g100_rows.append({
-            "100G Link": row.get("link_name", ""),
-            "Source Site": row.get("source_site", ""),
-            "Sink Site": row.get("sink_site", ""),
-            "Peak Time": row.get("peak_time", ""),
-            "Peak Util (Gbps)": row.get("peak_util_gbps", 0),
-            "Average Util (Gbps)": row.get("average_util_gbps", 0),
-            "Peak Average Ratio": row.get("peak_average_ratio", 0),
-            "Util Band": row.get("util_band", ""),
+
+    for row in Link100GSummary.objects.filter(upload_run=latest_run):
+            g100_rows.append({
+        "100G Link": row.link_name,
+        "Source Site": row.source_site,
+        "Sink Site": row.sink_site,
+        "Peak Time": row.peak_time,
+        "Peak Util (Gbps)": row.peak_util_gbps,
+        "Average Util (Gbps)": row.average_util_gbps,
+        "BH Avg 20-22 (Gbps)": 0,
+        "Peak Average Ratio": row.peak_average_ratio,
+        "Util Band": row.util_band,
+    })
+            
+    ftth_rows = []
+
+    for row in FTTHSummary.objects.filter(upload_run=latest_run):
+        ftth_rows.append({
+            "OLT Name": row.olt_name,
+            "Peak Time": row.peak_time,
+            "Peak Util (Gbps)": row.peak_util_gbps,
+            "Average Util (Gbps)": row.average_util_gbps,
+            "Peak Direction": row.peak_direction,
         })
 
+    ftth_peaks = pd.DataFrame(ftth_rows)
     ring_peaks = pd.DataFrame(ring_rows)
     g100_peaks = pd.DataFrame(g100_rows)
     df = pd.DataFrame()
-    return df, ring_peaks, g100_peaks
+
+    return df, ring_peaks, g100_peaks,ftth_peaks
 
 
 def _json_default(value):
@@ -214,12 +249,12 @@ def _cache_file(cache_id: str, suffix: str) -> Path:
     return _results_dir() / f"{cache_id}_{suffix}.pkl.gz"
 
 
-def _store_results(request, df: pd.DataFrame, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame) -> None:
+def _store_results(request, df: pd.DataFrame, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame,ftth_peaks: pd.DataFrame,) -> None:
     _purge_old_cache_files()
 
     old_cache_id = request.session.get("cache_id")
     if old_cache_id:
-        for suffix in ("df", "ring", "g100"):
+        for suffix in ("df", "ring", "g100","ftth"):
             try:
                 _cache_file(old_cache_id, suffix).unlink(missing_ok=True)
             except OSError:
@@ -229,6 +264,7 @@ def _store_results(request, df: pd.DataFrame, ring_peaks: pd.DataFrame, g100_pea
     df.to_pickle(_cache_file(cache_id, "df"), compression="gzip")
     ring_peaks.to_pickle(_cache_file(cache_id, "ring"), compression="gzip")
     g100_peaks.to_pickle(_cache_file(cache_id, "g100"), compression="gzip")
+    ftth_peaks.to_pickle(_cache_file(cache_id, "ftth"), compression="gzip")
 
     request.session["cache_id"] = cache_id
     request.session.modified = True
@@ -237,23 +273,30 @@ def _store_results(request, df: pd.DataFrame, ring_peaks: pd.DataFrame, g100_pea
 def _load_results(request):
     cache_id = request.session.get("cache_id")
     if not cache_id:
-        return None, None, None
+        return None, None, None, None
 
     df_path = _cache_file(cache_id, "df")
     ring_path = _cache_file(cache_id, "ring")
     g100_path = _cache_file(cache_id, "g100")
+    ftth_path = _cache_file(cache_id, "ftth")
 
-    if not df_path.exists() or not ring_path.exists() or not g100_path.exists():
-        return None, None, None
+    if (
+        not df_path.exists()
+        or not ring_path.exists()
+        or not g100_path.exists()
+        or not ftth_path.exists()
+    ):
+        return None, None, None, None
 
     try:
         df = pd.read_pickle(df_path, compression="gzip")
         ring_peaks = pd.read_pickle(ring_path, compression="gzip")
         g100_peaks = pd.read_pickle(g100_path, compression="gzip")
+        ftth_peaks = pd.read_pickle(ftth_path, compression="gzip")
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
-    return df, ring_peaks, g100_peaks
+    return df, ring_peaks, g100_peaks, ftth_peaks
 
 
 def _proof_context(df, ring_peaks, g100_peaks, request=None):
@@ -394,7 +437,7 @@ def _build_context(df, ring_peaks, g100_peaks, service_peaks=None, errors=None, 
         "busiest_100g": float(g100_peaks["Peak Util (Gbps)"].max()) if not g100_peaks.empty else 0.0,
         "top10_ring_columns": ["Ring", "Board Pair", "Total TX (Gbps)", "Util %", "Util Band"],
         "top10_ring_rows": [],
-        "top10_100g_columns": ["100G Link", "Peak Util (Gbps)", "Average Util (Gbps)", "Peak Average Ratio", "Util Band", "Peak Time"],
+        "top10_100g_columns": ["100G Link", "Peak Util (Gbps)", "Average Util (Gbps)", "BH Avg 20-22 (Gbps)", "Peak Average Ratio", "Util Band", "Peak Time"],
         "top10_100g_rows": [],
         "top10_ring_chart_labels": [],
         "top10_ring_chart_values": [],
@@ -433,6 +476,7 @@ def upload_view(request):
 def result_view(request):
     if request.method == "POST":
         form = UploadFilesForm(request.POST, request.FILES)
+
         if not form.is_valid():
             errors = []
             for field, msgs in form.errors.items():
@@ -474,52 +518,61 @@ def result_view(request):
                     nodes.add(m.sink_ne)
 
             ring_peaks.at[idx, "Node Count"] = len(nodes)
+
         g100_peaks = build_100g_peak_summary(df)
         service_peaks = build_service_peak_summary(df)
+        ftth_peaks = build_ftth_peak_summary(df)
 
-        _save_analysis_to_db(files, ring_peaks, g100_peaks)
-        _store_results(request, df, ring_peaks, g100_peaks)
+        _save_analysis_to_db(
+            files,
+            ring_peaks,
+            g100_peaks,
+            ftth_peaks
+        )
+
+        _store_results(
+            request,
+            df,
+            ring_peaks,
+            g100_peaks,
+            ftth_peaks
+        )
 
         context = _build_context(
-    df,
-    ring_peaks,
-    g100_peaks,
-    service_peaks,
-    errors=errors,
-    request=request
-)
+            df,
+            ring_peaks,
+            g100_peaks,
+            service_peaks,
+            errors=errors,
+            request=request
+        )
 
-        ##context["top10_ring_weekly_chart"] = json.dumps(
-    #top10_current_table_ring_chart_data(
-       # context["top10_ring_rows"]
-    #)
-#)
         return render(request, "dashboard/result.html", context)
 
-    df, ring_peaks, g100_peaks = _load_results(request)
+    df, ring_peaks, g100_peaks, ftth_peaks = _load_results(request)
+
     if df is None:
-        df, ring_peaks, g100_peaks = _latest_db_results()
+        df, ring_peaks, g100_peaks, ftth_peaks = _latest_db_results()
+
         if df is None:
             return redirect("upload")
-        context = _build_context(df, ring_peaks, g100_peaks, request=None)
-        context["errors"] = ["Showing latest saved database result. Proof/debug requires re-upload in the current session."]
-        #context["top10_ring_weekly"] = top10_ring_weekly_trend()
-       # context["top10_ring_weekly_chart"] = json.dumps(
-   # top10_current_table_ring_chart_data(
-        #context["top10_ring_rows"]
-    #)
-#)
+
+        context = _build_context(
+            df,
+            ring_peaks,
+            g100_peaks,
+            service_peaks=pd.DataFrame(),
+            request=None
+        )
+
+        context["errors"] = [
+            "Showing latest saved database result. Proof/debug requires re-upload in the current session."
+        ]
 
         return render(request, "dashboard/result.html", context)
-    context = _build_context(df, ring_peaks, g100_peaks, request=request)
-    #to enable for weekly line chjart
-    #context["top10_ring_weekly"] = top10_ring_weekly_trend()
 
-    #context["top10_ring_weekly_chart"] = json.dumps(
-    #top10_current_table_ring_chart_data(
-     #   context["top10_ring_rows"]
-    #)
-#)
+    context = _build_context(df, ring_peaks, g100_peaks, request=request)
+
     return render(request, "dashboard/result.html", context)
 
 
@@ -647,12 +700,17 @@ def weekly_trend_view(request):
     return render(request, "dashboard/weekly_trend.html", context)
 
 def proof_data_view(request):
-    df, ring_peaks, g100_peaks = _load_results(request)
+    df, ring_peaks, g100_peaks, ftth_peaks = _load_results(request)
+
     if df is None:
-        return JsonResponse({"ok": False, "error": "No cached upload data found. Please upload files again."}, status=400)
+        return JsonResponse(
+            {"ok": False, "error": "No cached upload data found. Please upload files again."},
+            status=400
+        )
 
     proof_context = _proof_context(df, ring_peaks, g100_peaks, request=request)
     html = render_to_string("dashboard/proof_content.html", proof_context, request=request)
+
     return JsonResponse({"ok": True, "html": html})
 
 def top10_ring_weekly_trend():
@@ -810,18 +868,25 @@ def top10_current_table_ring_chart_data(top10_ring_rows):
     }
 
 def download_excel_view(request):
-    df, ring_peaks, g100_peaks = _load_results(request)
+    df, ring_peaks, g100_peaks, ftth_peaks = _load_results(request)
 
     if df is None:
-        return redirect("upload")
+        df, ring_peaks, g100_peaks, ftth_peaks = _latest_db_results()
 
-    service_peaks = build_service_peak_summary(df)
+        if df is None:
+            return redirect("upload")
+
+        service_peaks = pd.DataFrame()
+    else:
+        service_peaks = build_service_peak_summary(df)
+
     ring_node_details = build_ring_node_detail(ring_peaks)
 
     excel_bytes = to_excel_bytes(
         ring_peaks,
         g100_peaks,
         service_peaks,
+        ftth_peaks,
         ring_node_details
     )
 

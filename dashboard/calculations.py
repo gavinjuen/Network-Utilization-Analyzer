@@ -81,12 +81,27 @@ def extract_sink_site(resource_name):
 
 def extract_service_name(resource_name):
     text = str(resource_name).upper()
-
-
     # Detect DIGI DROP W / DIGI DROP (W) / DIGI DROP P / DIGI DROP (P)
     m = re.search(r"\b([A-Z0-9_]+)\s+DROP\s*\(?([WP])\)?\b", text)
     if m:
         return f"{m.group(1)} DROP {m.group(2)}"
+
+    return ""
+
+def extract_olt_name(resource_name):
+    text = str(resource_name)
+
+    if "[100G LINK]" in text.upper():
+        return ""
+
+    m = re.search(
+        r"K1(?:EX10|E224).*?\((OLT.*?\[(?:PRIMARY|SECONDARY)\])",
+        text,
+        re.IGNORECASE
+    )
+
+    if m:
+        return m.group(1).strip()
 
     return ""
 
@@ -590,7 +605,9 @@ def build_ring_peak_summary(df):
     ).reset_index(drop=True)
     
 def build_100g_peak_summary(df):
-    g100_df = df[df["100G Link"] != ""].dropna(subset=["Collection Time", "MAX_bps"]).copy()
+    g100_df = df[df["100G Link"] != ""].dropna(
+        subset=["Collection Time", "MAX_bps"]
+    ).copy()
 
     output_columns = [
         "100G Link",
@@ -599,6 +616,7 @@ def build_100g_peak_summary(df):
         "Peak Time",
         "Peak Util (Gbps)",
         "Average Util (Gbps)",
+        "BH Avg 20-22 (Gbps)",
         "Peak Average Ratio",
         "Util Band",
     ]
@@ -619,13 +637,43 @@ def build_100g_peak_summary(df):
         if grp.empty:
             continue
 
+        grp = grp.copy()
+        grp["Collection Time"] = pd.to_datetime(
+            grp["Collection Time"],
+            errors="coerce"
+        )
+
+        grp = grp.dropna(subset=["Collection Time"])
+
+        if grp.empty:
+            continue
+
         grp = grp.sort_values("MAX_bps", ascending=False).reset_index(drop=True)
         peak_row = grp.iloc[0]
 
         max_bps_series = pd.to_numeric(grp["MAX_bps"], errors="coerce")
-        peak_bps = float(max_bps_series.iloc[0]) if not max_bps_series.empty else 0.0  
+
+        peak_bps = float(max_bps_series.iloc[0]) if not max_bps_series.empty else 0.0
         avg_bps = float(max_bps_series.mean()) if not max_bps_series.empty else 0.0
         par = (peak_bps / avg_bps) if avg_bps > 0 else 0.0
+
+        bh_grp = grp[
+            (grp["Collection Time"].dt.hour >= 20) &
+            (grp["Collection Time"].dt.hour <22)
+            |
+            (grp["Collection Time"].dt.hour == 22) &
+            (grp["Collection Time"].dt.minute == 0)
+        ].copy()
+
+        if not bh_grp.empty:
+            bh_avg_bps = float(
+                pd.to_numeric(
+                    bh_grp["MAX_bps"],
+                    errors="coerce"
+                ).mean()
+            )
+        else:
+            bh_avg_bps = 0.0
 
         result_rows.append({
             "100G Link": link_name,
@@ -634,6 +682,7 @@ def build_100g_peak_summary(df):
             "Peak Time": peak_row["Collection Time"],
             "Peak Util (Gbps)": round(peak_bps / 1e9, 3),
             "Average Util (Gbps)": round(avg_bps / 1e9, 3),
+            "BH Avg 20-22 (Gbps)": round(bh_avg_bps / 1e9, 3),
             "Peak Average Ratio": round(par, 2),
             "Util Band": util_band_100g(peak_bps / 1e9),
         })
@@ -743,7 +792,55 @@ def build_100g_proof(df, link_name):
     proof["Selected Max TX/RX (Gbps)"] = (proof["MAX_bps"] / 1e9).round(3)
     return proof.sort_values("Selected Max TX/RX (Gbps)", ascending=False)
 
-def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ring_node_details=None):
+def build_ftth_peak_summary(df):
+    ftth_df = df.copy()
+    ftth_df["OLT Name"] = ftth_df["Resource Name"].apply(extract_olt_name)
+
+    ftth_df = ftth_df[ftth_df["OLT Name"] != ""].dropna(
+        subset=["Collection Time", "TX_bps","RX_bps"]
+    ).copy()
+
+    output_columns = [
+        "OLT Name",
+        "Resource Name",
+        "Peak Time",
+        "TX (Gbps)",
+        "RX (Gbps)",
+        "Peak Direction",
+        "Peak Util (Gbps)",
+    ]
+    
+    if ftth_df.empty:
+        return pd.DataFrame(columns=output_columns)
+    
+    ftth_df["TX_bps"] = pd.to_numeric(ftth_df["TX_bps"], errors="coerce").fillna(0)
+    ftth_df["RX_bps"] = pd.to_numeric(ftth_df["RX_bps"], errors="coerce").fillna(0)
+
+    # Select highest between TX and RX for each row
+    ftth_df["MAX_bps"] = ftth_df[["TX_bps", "RX_bps"]].max(axis=1)
+
+    # Sort highest first
+    ftth_df = ftth_df.sort_values("MAX_bps", ascending=False)
+
+    # For each OLT, take the row with highest TX/RX
+    result = ftth_df.groupby("OLT Name", as_index=False).first()
+
+    result["Peak Time"] = result["Collection Time"]
+    result["TX (Gbps)"] = (result["TX_bps"] / 1e9).round(3)
+    result["RX (Gbps)"] = (result["RX_bps"] / 1e9).round(3)
+    result["Peak Util (Gbps)"] = (result["MAX_bps"] / 1e9).round(3)
+
+    result["Peak Direction"] = result.apply(
+        lambda r: "TX" if r["TX_bps"] >= r["RX_bps"] else "RX",
+        axis=1
+    )
+
+    return result[output_columns].sort_values(
+        ["Peak Util (Gbps)", "OLT Name"],
+        ascending=[False, True]
+    ).reset_index(drop=True)
+
+def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ftth_peaks=None,ring_node_details=None):
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="xlsxwriter", datetime_format="dd/mm/yyyy hh:mm") as writer:
@@ -752,6 +849,9 @@ def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ring_node_details
 
         if service_peaks is not None:
             service_peaks.to_excel(writer, sheet_name="Service_Peak_Summary", index=False)
+
+        if ftth_peaks is not None:
+            ftth_peaks.to_excel(writer, sheet_name="FTTH_Peak_Summary", index=False)
 
         valid_node_detail = (
             ring_node_details is not None

@@ -56,3 +56,23 @@ class RingNodeMapping(models.Model):
 
     def __str__(self):
         return f"{self.normalized_ring} | {self.normalized_board_pair}"
+    
+
+class FTTHSummary(models.Model):
+    upload_run = models.ForeignKey(
+        UploadRun,
+        on_delete=models.CASCADE,
+        related_name="ftth_summaries"
+    )
+
+    olt_name = models.CharField(max_length=255)
+    peak_time = models.DateTimeField()
+    peak_util_gbps = models.FloatField()
+    average_util_gbps = models.FloatField()
+    peak_direction = models.CharField(max_length=10)
+
+    class Meta:
+        ordering = ["-peak_util_gbps"]
+
+    def __str__(self):
+        return self.olt_name

@@ -6,17 +6,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Network Utilization Analyzer{% endblock %}</title>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.x/css/materialdesignicons.min.css" rel="stylesheet">
-  <link href="https://cdn.jsdelivr.net/npm/vuetify@3.6.8/dist/vuetify.min.css" rel="stylesheet">
+  <link href="{% static 'dashboard/vendor/mdi/css/materialdesignicons.min.css' %}" rel="stylesheet">
+  <link href="{% static 'dashboard/vendor/vuetify/vuetify.min.css' %}" rel="stylesheet">
 
 
   
   <style>
 
     [v-cloak]{
+      display:none !important;
+    }
+    .no-vue .vue-only,
+    .vue-ready .no-vue-only{
       display:none !important;
     }
 
@@ -914,10 +915,70 @@ button.action-btn, a.action-btn{
   </v-app>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/vue@3.4.31/dist/vue.global.prod.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/vuetify@3.6.8/dist/vuetify.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{% static 'dashboard/vendor/vue/vue.global.prod.js' %}"></script>
+<script src="{% static 'dashboard/vendor/vuetify/vuetify.min.js' %}"></script>
+<script src="{% static 'dashboard/vendor/chartjs/chart.umd.js' %}"></script>
 <script>
+function revealCloakedContent() {
+  document.querySelectorAll('[v-cloak]').forEach(function(el) {
+    el.removeAttribute('v-cloak');
+  });
+}
+
+function enableNoVueFallback() {
+  document.documentElement.classList.add('no-vue');
+  revealCloakedContent();
+
+  let activeTab = 'dashboard';
+
+  function getTabName(expr) {
+    const match = String(expr || '').match(/activeTab\s*={2,3}\s*['"]([^'"]+)['"]/);
+    return match ? match[1] : '';
+  }
+
+  const tabPanels = Array.from(document.querySelectorAll('[v-show]')).map(function(panel) {
+    return {
+      panel: panel,
+      tab: getTabName(panel.getAttribute('v-show'))
+    };
+  }).filter(function(item) {
+    return item.tab;
+  });
+
+  function setActiveTab(tab) {
+    activeTab = tab || activeTab;
+
+    tabPanels.forEach(function(item) {
+      item.panel.style.display = item.tab === activeTab ? '' : 'none';
+    });
+
+    document.querySelectorAll('a, button').forEach(function(el) {
+      const clickExpr = el.getAttribute('@click') || el.getAttribute('v-on:click') || '';
+      const tabName = getTabName(clickExpr);
+      if (tabName) {
+        el.classList.toggle('active', tabName === activeTab);
+      }
+    });
+  }
+
+  document.querySelectorAll('a, button').forEach(function(el) {
+    const clickExpr = el.getAttribute('@click') || el.getAttribute('v-on:click') || '';
+    const tabName = getTabName(clickExpr);
+    if (!tabName) return;
+
+    el.addEventListener('click', function(event) {
+      event.preventDefault();
+      setActiveTab(tabName);
+    });
+  });
+
+  setActiveTab(activeTab);
+}
+
+if (!window.Vue || !window.Vuetify) {
+  enableNoVueFallback();
+} else {
+document.documentElement.classList.add('vue-ready');
 const { createApp } = Vue;
 const { createVuetify } = Vuetify;
 const vuetify = createVuetify();
@@ -976,6 +1037,8 @@ const app = createApp({
 
 app.use(vuetify);
 app.mount('#app');
+revealCloakedContent();
+}
 </script>
 {% block extra_js %}{% endblock %}
 </body>

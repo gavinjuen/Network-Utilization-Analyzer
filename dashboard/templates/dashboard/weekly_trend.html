@@ -1,157 +1,337 @@
 {% extends "dashboard/base.html" %}
 {% block title %}Weekly Trend | Network Utilization Analyzer{% endblock %}
 {% block app_body_class %}no-sidebar{% endblock %}
+
 {% block content %}
+
 <div class="page-tabs">
-  <a class="page-tab" href="{% url 'upload' %}">Upload</a>
-  <a class="page-tab" href="{% url 'result' %}">Latest Result</a>
-  <a class="page-tab active" href="{% url 'weekly_trend' %}">Weekly Trend</a>
+    <a class="page-tab" href="{% url 'upload' %}">Upload</a>
+    <a class="page-tab" href="{% url 'result' %}">Latest Result</a>
+    <a class="page-tab active" href="{% url 'weekly_trend' %}">Weekly Trend</a>
 </div>
 
 <div class="toolbar-row">
-  <div>
-    <h1 class="page-title" style="font-size:28px; margin:0;">Weekly Trend</h1>
-    <div class="page-subtitle" style="margin-bottom:0;">Compare saved upload results by week for ring and 100G utilization.</div>
-  </div>
-</div>
-
-<div class="section-card" style="margin-bottom:18px;">
-  <div class="section-head">
     <div>
-      <h3 class="section-title">Trend Filter</h3>
-      <div class="section-note">Select one ring or 100G link and choose the metric to trend weekly.</div>
+        <h1 class="page-title" style="font-size:28px;margin:0;">
+            Weekly Trend
+        </h1>
+        <div class="page-subtitle">
+            Compare saved upload results by week for Ring and 100G utilization.
+        </div>
     </div>
-  </div>
-  <div style="padding:0 16px 18px;">
-    <form method="get" action="{% url 'weekly_trend' %}" style="display:grid; grid-template-columns: 180px 1fr 220px 120px; gap:14px; align-items:end;">
-      <div>
-        <div class="field-label">Type</div>
-        <div class="field-control">
-          <select name="type" id="trend-type" onchange="toggleTrendType()">
-            <option value="ring" {% if selected_type == 'ring' %}selected{% endif %}>Ring</option>
-            <option value="g100" {% if selected_type == 'g100' %}selected{% endif %}>100G Link</option>
-          </select>
-        </div>
-      </div>
-
-      <div id="ring-select-wrap">
-        <div class="field-label">Ring / Board Pair</div>
-        <div class="field-control">
-          <select name="item" id="ring-item">
-            {% for opt in ring_options %}
-              <option value="{{ opt.value }}" {% if selected_item == opt.value and selected_type == 'ring' %}selected{% endif %}>{{ opt.label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-      </div>
-
-      <div id="g100-select-wrap">
-        <div class="field-label">100G Link</div>
-        <div class="field-control">
-          <select name="item" id="g100-item">
-            {% for opt in g100_options %}
-              <option value="{{ opt.value }}" {% if selected_item == opt.value and selected_type == 'g100' %}selected{% endif %}>{{ opt.label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <div class="field-label">Metric</div>
-        <div class="field-control">
-          <select name="metric">
-            <option value="peak" {% if selected_metric == 'peak' %}selected{% endif %}>Peak</option>
-            <option value="average" {% if selected_metric == 'average' %}selected{% endif %}>Average</option>
-            <option value="par" {% if selected_metric == 'par' %}selected{% endif %}>PAR</option>
-            {% if selected_type == 'ring' %}<option value="util" {% if selected_metric == 'util' %}selected{% endif %}>Util %</option>{% endif %}
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <button class="action-btn" type="submit" style="width:100%; min-height:46px;">Show</button>
-      </div>
-    </form>
-  </div>
 </div>
+
+
+<!-- ================= Filter ================= -->
+
+<div class="section-card" style="margin-bottom:20px;">
+
+    <div class="section-head">
+        <div>
+            <h3 class="section-title">Trend Filter</h3>
+            <div class="section-note">
+                Select one Ring or one 100G Link and display its historical utilization.
+            </div>
+        </div>
+    </div>
+
+    <div style="padding:18px;">
+
+        <form method="get" action="{% url 'weekly_trend' %}"
+              style="display:grid;
+                     grid-template-columns:170px 1fr 180px 120px;
+                     gap:14px;
+                     align-items:end;">
+
+            <div>
+                <div class="field-label">Type</div>
+
+                <div class="field-control">
+                    <select id="trend-type"
+                            name="type"
+                            onchange="toggleTrendType()">
+
+                        <option value="ring"
+                            {% if selected_type == 'ring' %}selected{% endif %}>
+                            Ring
+                        </option>
+
+                        <option value="g100"
+                            {% if selected_type == 'g100' %}selected{% endif %}>
+                            100G Link
+                        </option>
+
+                    </select>
+                </div>
+            </div>
+
+
+            <div id="ring-select-wrap">
+
+                <div class="field-label">
+                    Ring / Board Pair
+                </div>
+
+                <div class="field-control">
+
+                    <select id="ring-item" name="item">
+
+                        {% for opt in ring_options %}
+                        <option value="{{ opt.value }}"
+                            {% if selected_item == opt.value and selected_type == 'ring' %}selected{% endif %}>
+                            {{ opt.label }}
+                        </option>
+                        {% endfor %}
+
+                    </select>
+
+                </div>
+
+            </div>
+
+
+            <div id="g100-select-wrap">
+
+                <div class="field-label">
+                    100G Link
+                </div>
+
+                <div class="field-control">
+
+                    <select id="g100-item" name="item">
+
+                        {% for opt in g100_options %}
+                        <option value="{{ opt.value }}"
+                            {% if selected_item == opt.value and selected_type == 'g100' %}selected{% endif %}>
+                            {{ opt.label }}
+                        </option>
+                        {% endfor %}
+
+                    </select>
+
+                </div>
+
+            </div>
+
+
+            <div>
+
+                <div class="field-label">
+                    Metric
+                </div>
+
+                <div class="field-control">
+
+                    <select name="metric">
+
+                        <option value="peak"
+                            {% if selected_metric == 'peak' %}selected{% endif %}>
+                            Peak
+                        </option>
+
+                        <option value="average"
+                            {% if selected_metric == 'average' %}selected{% endif %}>
+                            Average
+                        </option>
+
+                        <option value="par"
+                            {% if selected_metric == 'par' %}selected{% endif %}>
+                            PAR
+                        </option>
+
+                        {% if selected_type == 'ring' %}
+                        <option value="util"
+                            {% if selected_metric == 'util' %}selected{% endif %}>
+                            Util %
+                        </option>
+                        {% endif %}
+
+                    </select>
+
+                </div>
+
+            </div>
+
+            <div>
+                <button class="action-btn"
+                        type="submit"
+                        style="width:100%;min-height:46px;">
+                    Show
+                </button>
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- ================= Chart ================= -->
+
+{% if has_trend_data %}
 
 <div class="section-card">
-  <div class="section-head">
-    <div>
-      <h3 class="section-title">{{ chart_title }}</h3>
-      <div class="section-note">Weekly {{ metric_label }} trend based on saved uploads.</div>
+
+    <div class="section-head">
+
+        <div>
+
+            <h3 class="section-title">
+                {{ chart_title }}
+            </h3>
+
+            <div class="section-note">
+                Weekly {{ metric_label }} trend based on saved uploads.
+            </div>
+
+        </div>
+
+        <span class="mini-tag">
+            {{ metric_label }}
+        </span>
+
     </div>
-    <span class="mini-tag">{{ metric_label }}</span>
-  </div>
-  <div class="chart-wrap">
-    {% if has_trend_data %}
-      <div class="chart-box" style="height:420px;"><canvas id="weeklyTrendChart"></canvas></div>
-    {% else %}
-      <div class="empty-state">No saved weekly trend data yet. Upload files first, then return to this page.</div>
-    {% endif %}
-  </div>
+
+    <div class="chart-wrap">
+
+        <div class="chart-box" style="height:430px;">
+            <canvas id="weeklyTrendChart"></canvas>
+        </div>
+
+    </div>
+
 </div>
 
-<div class="btn-row" style="margin-top:16px;">
-  <a class="action-btn outline" href="{% url 'upload' %}">Back to Upload</a>
-  <a class="action-btn" href="{% url 'result' %}">Latest Result</a>
+{% else %}
+
+<div class="section-card">
+
+    <div class="empty-state" style="padding:60px 20px;text-align:center;">
+
+        <h3>No Weekly Trend Available</h3>
+
+        <p style="margin-top:10px;">
+            Upload performance files first, then click
+            <strong>Show</strong> to display the historical trend.
+        </p>
+
+    </div>
+
 </div>
+
+{% endif %}
+
+
+<div class="btn-row" style="margin-top:18px;">
+    <a class="action-btn outline"
+       href="{% url 'upload' %}">
+        Back to Upload
+    </a>
+
+    <a class="action-btn"
+       href="{% url 'result' %}">
+        Latest Result
+    </a>
+</div>
+
 {% endblock %}
 
+
 {% block extra_js %}
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <script>
+
 function toggleTrendType(){
   const type = document.getElementById('trend-type').value;
+
   const ringWrap = document.getElementById('ring-select-wrap');
   const g100Wrap = document.getElementById('g100-select-wrap');
+
   const ringItem = document.getElementById('ring-item');
   const g100Item = document.getElementById('g100-item');
 
   if(type === 'g100'){
     ringWrap.style.display = 'none';
     g100Wrap.style.display = 'block';
+
     ringItem.disabled = true;
+    ringItem.removeAttribute('name');
+
     g100Item.disabled = false;
+    g100Item.setAttribute('name', 'item');
   } else {
     g100Wrap.style.display = 'none';
     ringWrap.style.display = 'block';
+
     g100Item.disabled = true;
+    g100Item.removeAttribute('name');
+
     ringItem.disabled = false;
+    ringItem.setAttribute('name', 'item');
   }
 }
 
-document.addEventListener('DOMContentLoaded', function(){
-  toggleTrendType();
+document.addEventListener("DOMContentLoaded",function(){
 
-  const labels = {{ chart_labels_json|safe }};
-  const values = {{ chart_values_json|safe }};
+    toggleTrendType();
 
-  console.log("labels:", labels);
-  console.log("values:", values);
+    const canvas=document.getElementById("weeklyTrendChart");
 
-  const canvas = document.getElementById('weeklyTrendChart');
+    if(!canvas)
+        return;
 
-  if(canvas && labels.length > 0 && values.length > 0){
-    new Chart(canvas, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: '{{ metric_label }}',
-          data: values,
-          borderWidth: 3,
-          pointRadius: 5,
-          tension: 0.3,
-          fill: false
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false
-      }
+    new Chart(canvas,{
+
+        type:"line",
+
+        data:{
+
+            labels:{{ chart_labels_json|safe }},
+
+            datasets:[{
+
+                label:"{{ metric_label }}",
+
+                data:{{ chart_values_json|safe }},
+
+                borderWidth:3,
+
+                pointRadius:5,
+
+                tension:0.35,
+
+                fill:false
+
+            }]
+
+        },
+
+        options:{
+
+            responsive:true,
+
+            maintainAspectRatio:false,
+
+            interaction:{
+                intersect:false,
+                mode:"index"
+            },
+
+            plugins:{
+                legend:{
+                    display:true
+                }
+            }
+
+        }
+
     });
-  }
+
 });
+
 </script>
+
 {% endblock %}

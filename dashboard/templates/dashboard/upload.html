@@ -35,7 +35,7 @@
       <form method="post" action="{% url 'result' %}" enctype="multipart/form-data" @submit="validateUpload">
         {% csrf_token %}
 
-        <div v-if="uploadError" style="padding:12px 14px; margin-bottom:14px; border:1px solid #7d3140; background:#5b1f2a; color:#fff; border-radius:12px;">
+        <div v-if="uploadError" class="vue-only" style="padding:12px 14px; margin-bottom:14px; border:1px solid #7d3140; background:#5b1f2a; color:#fff; border-radius:12px;">
           [[ uploadError ]]
         </div>
 
@@ -49,22 +49,14 @@
           </div>
 
           <div class="vuetify-upload-wrap">
-            <v-file-input
-              v-model="selectedFiles"
+            <input
+              type="file"
               name="files"
-              label="Drop files here or click to browse"
               multiple
-              chips
-              show-size
-              prepend-icon="mdi-cloud-upload"
-              variant="outlined"
-              density="comfortable"
               accept=".csv,.zip"
-              color="primary"
-              bg-color="transparent"
-              clearable
-              counter
-            ></v-file-input>
+              required
+              @change="selectedFiles = Array.from($event.target.files)"
+            >
           </div>
         </div>
 
@@ -79,7 +71,8 @@
         <div class="btn-row" style="margin-top:18px;">
           <button class="action-btn" type="submit" :disabled="uploading">
             <i class="mdi mdi-calculator-variant-outline"></i>
-            [[ uploading ? 'Processing...' : 'Calculate' ]]
+            <span class="vue-only">[[ uploading ? 'Processing...' : 'Calculate' ]]</span>
+            <span class="no-vue-only">Calculate</span>
           </button>
 
           <a class="action-btn outline" href="{% url 'result' %}">
