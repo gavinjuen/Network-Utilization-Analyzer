@@ -5,7 +5,7 @@ from uuid import uuid4
 import time
 import json
 from collections import defaultdict
-
+import time
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
@@ -16,16 +16,17 @@ import pandas as pd
 from collections import defaultdict
 import json
 import pandas as pd
-from .models import RingSummary, Link100GSummary
-from .forms import UploadFilesForm, RingMappingUploadForm
+from .models import RingSummary, Link100GSummary,AccessBandwidth
+from .forms import UploadFilesForm, RingMappingUploadForm,BandwidthMasterUploadForm
 from .models import UploadRun, RingSummary, Link100GSummary, RingNodeMapping,FTTHSummary
 from .calculations import (
     read_uploaded_files, prepare_dataframe, build_ring_peak_summary,
     build_100g_peak_summary, build_ring_proof, build_100g_proof, to_excel_bytes,
-    build_service_peak_summary, build_ftth_peak_summary, normalize_ring_name,
-    normalize_board_pair
+    build_service_peak_summary,build_access_service_summary,build_ftth_peak_summary, normalize_ring_name,
+    normalize_board_pair,parse_resource_once
 )
 from django.contrib import messages
+import math
 
 CACHE_MAX_AGE_SECONDS = 60 * 60 * 12
 def parse_huawei_datetime(value):
@@ -98,6 +99,62 @@ def upload_ring_mapping_view(request):
 
     return redirect("upload")
 
+
+def upload_bandwidth_master_view(request):
+    if request.method != "POST":
+        return redirect("upload")
+
+    file = request.FILES.get("bandwidth_file")
+
+    if not file:
+        messages.error(request, "No bandwidth masterlist file uploaded.")
+        return redirect("upload")
+
+    try:
+        df = pd.read_excel(file)
+        df.columns = df.columns.astype(str).str.strip().str.upper()
+
+        required_cols = ["NEID", "SITE ID", "SITE NAME", "CURRENT CAPACITY"]
+        missing = [c for c in required_cols if c not in df.columns]
+
+        if missing:
+            messages.error(request, f"Missing required columns: {', '.join(missing)}")
+            return redirect("upload")
+
+        objects = []
+
+        for _, row in df.iterrows():
+            site_name = str(row.get("SITE NAME", "")).upper().strip()
+
+            if not site_name or site_name == "NAN":
+                continue
+
+            capacity_raw = str(row.get("CURRENT CAPACITY", "0")).replace(",", "").strip()
+
+            try:
+                capacity = float(capacity_raw)
+                if math.isnan(capacity):
+                    capacity = 0
+            except (ValueError, TypeError):
+                capacity = 0
+
+            objects.append(AccessBandwidth(
+                neid=str(row.get("NEID", "")).strip(),
+                site_id=str(row.get("SITE ID", "")).strip(),
+                site_name=site_name,
+                current_capacity=capacity,  # Mbps
+            ))
+
+        AccessBandwidth.objects.all().delete()
+        AccessBandwidth.objects.bulk_create(objects, batch_size=1000)
+
+        messages.success(request, f"Imported {len(objects)} bandwidth records successfully.")
+
+    except Exception as e:
+        messages.error(request, f"Failed to import bandwidth masterlist: {e}")
+
+    return redirect("upload")
+
 def _save_analysis_to_db(files, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame,ftth_peaks: pd.DataFrame = None) -> UploadRun:
     file_name = ", ".join([getattr(f, "name", str(f)) for f in files]) or "Unknown upload"
     upload_run = UploadRun.objects.create(file_name=file_name)
@@ -165,7 +222,7 @@ def _latest_db_results():
     latest_run = UploadRun.objects.order_by("-uploaded_at").first()
 
     if not latest_run:
-        return None, None, None
+        return None, None, None, None
 
     ring_rows = []
 
@@ -249,26 +306,44 @@ def _cache_file(cache_id: str, suffix: str) -> Path:
     return _results_dir() / f"{cache_id}_{suffix}.pkl.gz"
 
 
-def _store_results(request, df: pd.DataFrame, ring_peaks: pd.DataFrame, g100_peaks: pd.DataFrame,ftth_peaks: pd.DataFrame,) -> None:
+def _store_results(request, df, ring_peaks, g100_peaks, ftth_peaks) -> None:
     _purge_old_cache_files()
 
     old_cache_id = request.session.get("cache_id")
     if old_cache_id:
-        for suffix in ("df", "ring", "g100","ftth"):
+        for suffix in ("df", "ring", "g100", "ftth"):
             try:
                 _cache_file(old_cache_id, suffix).unlink(missing_ok=True)
             except OSError:
                 pass
 
     cache_id = uuid4().hex
-    df.to_pickle(_cache_file(cache_id, "df"), compression="gzip")
+
+    proof_columns = [
+        "Collection Time",
+        "Resource Name",
+        "Source File",
+        "TX_bps",
+        "RX_bps",
+        "MAX_bps",
+        "Ring",
+        "Endpoint",
+        "Board Type",
+        "Link Instance",
+        "Service Group",
+        "Service Name",   # add this
+        "100G Link",
+    ]
+    available_cols = [c for c in proof_columns if c in df.columns]
+    proof_df = df[available_cols].copy()
+
+    proof_df.to_pickle(_cache_file(cache_id, "df"), compression="gzip")
     ring_peaks.to_pickle(_cache_file(cache_id, "ring"), compression="gzip")
     g100_peaks.to_pickle(_cache_file(cache_id, "g100"), compression="gzip")
     ftth_peaks.to_pickle(_cache_file(cache_id, "ftth"), compression="gzip")
 
     request.session["cache_id"] = cache_id
     request.session.modified = True
-
 
 def _load_results(request):
     cache_id = request.session.get("cache_id")
@@ -493,12 +568,16 @@ def result_view(request):
                 "form": form,
                 "errors": errors or ["No valid data loaded. Try different skiprows."],
             })
-
+        start = time.perf_counter()
+        parse_resource_once.cache_clear()
         df = prepare_dataframe(raw_df)
+        print(f"Prepare DataFrame: {time.perf_counter()-start:.2f}s")
         del raw_df
-
+        
+        start = time.perf_counter()
         ring_peaks = build_ring_peak_summary(df)
         ring_peaks["Node Count"] = 0
+        print(f"Ring Summary: {time.perf_counter()-start:.2f}s")
 
         for idx, row in ring_peaks.iterrows():
             norm_ring = normalize_ring_name(row.get("Ring", ""))
@@ -519,17 +598,24 @@ def result_view(request):
 
             ring_peaks.at[idx, "Node Count"] = len(nodes)
 
+        start = time.perf_counter()
         g100_peaks = build_100g_peak_summary(df)
+        print(f"100G Summary: {time.perf_counter()-start:.2f}s")
         service_peaks = build_service_peak_summary(df)
-        ftth_peaks = build_ftth_peak_summary(df)
+        print(f"Access Service Summary: {time.perf_counter()-start:.2f}s")
+        ftth_peaks = build_access_service_summary(df)
+        print(f"build acces: {time.perf_counter()-start:.2f}s")
 
+        start = time.perf_counter()
         _save_analysis_to_db(
             files,
             ring_peaks,
             g100_peaks,
             ftth_peaks
         )
-
+        print(f"Save DB: {time.perf_counter()-start:.2f}s")
+        
+        start = time.perf_counter()
         _store_results(
             request,
             df,
@@ -537,7 +623,8 @@ def result_view(request):
             g100_peaks,
             ftth_peaks
         )
-
+        print(f"Store Cache: {time.perf_counter()-start:.2f}s")
+        
         context = _build_context(
             df,
             ring_peaks,
@@ -546,6 +633,7 @@ def result_view(request):
             errors=errors,
             request=request
         )
+        
 
         return render(request, "dashboard/result.html", context)
 

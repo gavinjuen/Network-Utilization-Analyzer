@@ -3,6 +3,14 @@ import os
 import re
 import zipfile
 import pandas as pd
+import re
+from functools import lru_cache
+from .models import AccessBandwidth
+
+RING_RE = re.compile(r"(\[RING_[^\]]+\])", re.IGNORECASE)
+LINK_INSTANCE_RE = re.compile(r"(?:UNQ2|U220)-(\d+)", re.IGNORECASE)
+DROP_RE = re.compile(r"\b([A-Z0-9_]+)\s+DROP\s*\(?([WP])\)?", re.IGNORECASE)
+
 
 REQUIRED_COLUMNS = [
     "Resource Name",
@@ -12,6 +20,57 @@ REQUIRED_COLUMNS = [
     "TXBPS(bit/s)",
 ]
 
+ACCESS_SERVICE_RULES = {
+    "OLT": "FTTH",
+    "DIGI": "DIGI",
+    "MAXIS": "MAXIS",
+    "CELCOM": "CELCOM",
+    "UM": "UM",
+    "DNB": "DNB",
+    "YTL": "YTL",
+}
+BOARD_TYPES = (
+    "UNS4MP",
+    "UNQ2",
+    "U220",
+    "U402",
+    "EX10",
+    "E224",
+    "EX2",
+    "EM20",
+    "HUNS3",
+)
+
+DROP_OPERATOR_RULES = {
+    "DIGI": "DIGI",
+    "CELCOM": "CELCOM",
+    "MAXIS": "MAXIS",
+    "UM": "UM",
+    "UMOBILE": "UM",
+    "U MOBILE": "UM",
+    "YTL": "YTL",
+    "DNB": "DNB",
+}
+def normalize_capacity_match_name(service_name):
+    name = str(service_name).upper().strip()
+
+    # remove operator prefix
+    for op in ["DIGI", "MAXIS", "CELCOM", "UMOBILE", "U MOBILE", "UM", "YTL", "DNB"]:
+        if name.startswith(op + " "):
+            name = name[len(op):].strip()
+            break
+
+    # remove site codes like (7107B)
+    name = re.sub(r"\([A-Z0-9]+\)?", "", name)
+
+    # remove trailing codes like 7683B / 7641A / 7230R
+    name = re.sub(r"\b\d{4,5}[A-Z]\b", "", name)
+
+    # cleanup
+    name = name.replace("_", "-")
+    name = re.sub(r"\s+", " ", name).strip()
+
+    return name
 def parse_bps(value):
     if pd.isna(value):
         return None
@@ -25,92 +84,33 @@ def parse_bps(value):
     multiplier = {"": 1.0, "K": 1e3, "M": 1e6, "G": 1e9}[unit]
     return number * multiplier
 
-def ring_from_resource(resource_name):
-    if not resource_name:
-        return ""
-    m = re.search(r"(\[RING_[^\]]+\])", str(resource_name))
-    return m.group(1) if m else ""
-
-def extract_endpoint(resource_name):
-    if not resource_name:
-        return ""
-    text = str(resource_name).strip()
-    if "-MAC" in text:
-        return text.split("-MAC")[0].strip()
-    return text
-
-def extract_source_site(resource_name):
-    if not resource_name:
-        return ""
-
-    text = str(resource_name).strip()
-
-    # For 100G link, take left side before [100G LINK] TO
-    marker = "[100G LINK] TO"
-    upper_text = text.upper()
-    pos = upper_text.find(marker)
-    left_part = text[:pos].strip() if pos != -1 else text
-
-    # Remove anything from -Shelf onward
-    shelf_pos = left_part.upper().find("-SHELF")
-    if shelf_pos != -1:
-        left_part = left_part[:shelf_pos].strip()
-
-    return left_part.strip(" -")
-
-def extract_sink_site(resource_name):
-    if not resource_name:
-        return ""
-
-    text = str(resource_name)
-    upper_text = text.upper()
-    marker = "[100G LINK] TO"
-    start = upper_text.find(marker)
-    if start == -1:
-        return ""
-
-    sink_part = text[start + len(marker):].strip()
-
-    mac_pos = sink_part.upper().find("-MAC")
-    if mac_pos != -1:
-        sink_part = sink_part[:mac_pos].strip()
-
-    sink_part = sink_part.strip().strip(")- ")
-
-    return sink_part
-
-def extract_service_name(resource_name):
-    text = str(resource_name).upper()
-    # Detect DIGI DROP W / DIGI DROP (W) / DIGI DROP P / DIGI DROP (P)
-    m = re.search(r"\b([A-Z0-9_]+)\s+DROP\s*\(?([WP])\)?\b", text)
-    if m:
-        return f"{m.group(1)} DROP {m.group(2)}"
-
-    return ""
-
-def extract_olt_name(resource_name):
-    text = str(resource_name)
-
-    if "[100G LINK]" in text.upper():
-        return ""
-
-    m = re.search(
-        r"K1(?:EX10|E224).*?\((OLT.*?\[(?:PRIMARY|SECONDARY)\])",
-        text,
-        re.IGNORECASE
+def convert_bps(series):
+    s = (
+        series.fillna("0")
+        .astype(str)
+        .str.upper()
+        .str.replace(",", "", regex=False)
+        .str.strip()
     )
 
-    if m:
-        return m.group(1).strip()
+    # Last character determines the unit
+    unit = s.str[-1]
 
-    return ""
+    # Remove the unit only when present
+    number = s.where(~unit.isin(["K", "M", "G"]), s.str[:-1])
 
-def extract_100g_link_name(resource_name):
-    source = extract_source_site(resource_name)
-    sink = extract_sink_site(resource_name)
-    if not source or not sink:
-        return ""
-    return f"{source} -> {sink}"
+    number = pd.to_numeric(number, errors="coerce").fillna(0)
+
+    multiplier = (
+        unit.map({
+            "K": 1e3,
+            "M": 1e6,
+            "G": 1e9,
+        })
+        .fillna(1)
+    )
+
+    return number * multiplier
 
 def util_band_ring(value_gbps):
     if value_gbps is None or pd.isna(value_gbps):
@@ -133,51 +133,13 @@ def util_band_100g(value_gbps):
     return "Normal"
 
 def detect_board_type(resource_name):
-    text = str(resource_name).upper()
-    if "UNS4MP" in text:
-        return "UNS4MP"
-    if "UNQ2" in text:
-        return "UNQ2"
-    if "U220" in text:
-        return "U220"
-    if "U402" in text:
-        return "U402"
-    if "EX10" in text:
-        return "EX10"
-    if "E224" in text:
-        return "E224"
-    if "EX2" in text:
-        return "EX2"
-    if "EM20" in text:
-        return "EM20"
-    if "HUNS3" in text:
-        return "HUNS3"
+    upper = str(resource_name).upper()
+
+    for board in BOARD_TYPES:
+        if board in upper:
+            return board
+
     return "OTHER"
-
-def extract_link_instance(resource_name):
-    text = str(resource_name).upper()
-    m = re.search(r"(?:UNQ2|U220)-(\d+)", text)
-    return m.group(1) if m else ""
-
-def extract_service_group(resource_name):
-    text = str(resource_name).upper()
-
-    has_digi_celcom = ("DIGI" in text) or ("CELCOM" in text)
-    has_maxis = ("MAXIS" in text)
-    has_ytl_um = ("YTL" in text) or bool(re.search(r"\bUM\b", text)) or ("UMOBILE" in text) or ("U MOBILE" in text)
-    has_olt_dnb = ("OLT" in text) or ("DNB" in text)
-
-    # Priority order requested by user:
-    # Digi/Celcom > Maxis > YTL/UM > OLT/DNB
-    if has_digi_celcom:
-        return "Digi/Celcom"
-    if has_maxis:
-        return "Maxis"
-    if has_ytl_um:
-        return "YTL/UM"
-    if has_olt_dnb:
-        return "OLT/DNB"
-    return ""
 
 def read_csv_bytes(raw_bytes, source_file, skiprows):
     last_error = None
@@ -235,37 +197,213 @@ def read_uploaded_files(uploaded_files, skiprows):
     combined.drop_duplicates(inplace=True)
     return combined, errors
 
-def prepare_dataframe(combined):
-    combined = combined.copy()
-    
+def normalize_access_service_name(access_name):
+    if access_name is None:
+        return ""
 
-    combined["Collection Time"] = pd.to_datetime(
-    combined["Collection Time"],
-    errors="coerce"
-)
+    access_name = str(access_name).upper().strip()
 
-    if combined["Collection Time"].isna().all():
-        combined["Collection Time"] = pd.to_datetime(
-            combined["Collection Time"],
-            dayfirst=True,
-            errors="coerce"
+    if not access_name or access_name == "NAN":
+        return ""
+
+    access_name = access_name.replace("_", "-")
+
+    access_name = re.sub(
+        r"\s*\((?:P|W|PROTECTION|PRIMARY|SECONDARY)\)?\s*$",
+        "",
+        access_name,
+        flags=re.IGNORECASE,
     )
-    combined["TX_bps"] = combined["TXBPS(bit/s)"].apply(parse_bps)
-    combined["RX_bps"] = combined["RXBPS(bit/s)"].apply(parse_bps)
-    combined["MAX_bps"] = combined[["TX_bps", "RX_bps"]].max(axis=1)
-    combined["Ring"] = combined["Resource Name"].apply(ring_from_resource)
-    combined["Endpoint"] = combined["Resource Name"].apply(extract_endpoint)
-    combined["Source Site"] = combined["Resource Name"].apply(extract_source_site)
-    combined["Sink Site"] = combined["Resource Name"].apply(extract_sink_site)
-    combined["100G Link"] = combined["Resource Name"].apply(extract_100g_link_name)
-    combined["Board Type"] = combined["Resource Name"].apply(detect_board_type)
-    combined["Link Instance"] = combined["Resource Name"].apply(extract_link_instance)
-    combined["Service Group"] = combined["Resource Name"].apply(extract_service_group)
-    combined["Service Name"] = combined["Resource Name"].apply(extract_service_name)
-    print(
+
+    access_name = re.sub(
+        r"\s*\((?:P|W|PROTECTION|PRIMARY|SECONDARY)\).*$",
+        "",
+        access_name,
+        flags=re.IGNORECASE,
+    )
+
+    access_name = re.sub(
+        r"\s*(?:1ST|2ND|3RD)\s*(?:SHARING|GE)?.*$",
+        "",
+        access_name,
+        flags=re.IGNORECASE,
+    )
+
+    access_name = re.sub(r"\s+", " ", access_name).strip()
+    access_name = re.sub(r"-{2,}", "-", access_name).strip("- ")
+
+    return access_name
+
+@lru_cache(maxsize=50000)
+def parse_resource_once(resource_name):
+
+    text = str(resource_name)
+    upper = text.upper()
+
+    result = {
+        "Ring": "",
+        "Endpoint": "",
+        "Source Site": "",
+        "Sink Site": "",
+        "100G Link": "",
+        "Board Type": "OTHER",
+        "Link Instance": "",
+        "Service Group": "",
+        "Service Name": "",
+        "Access Service Type": "",
+        "Access Service Name": "",
+    }
+
+    # Ring
+    m = RING_RE.search(text)
+    if m:
+        result["Ring"] = m.group(1)
+
+    # Endpoint
+    result["Endpoint"] = text.split("-MAC")[0].strip()
+
+    # 100G Link
+    if "[100G LINK] TO" in upper:
+
+        left, right = re.split(r"\[100G LINK\] TO", text, flags=re.IGNORECASE)
+
+        source = left.split("-Shelf")[0].strip(" -")
+
+        sink = right.split("-MAC")[0].strip(" -")
+
+        result["Source Site"] = source
+        result["Sink Site"] = sink
+        result["100G Link"] = f"{source} -> {sink}"
+
+    else:
+
+        result["Source Site"] = text.split("-Shelf")[0].strip(" -")
+
+    # Board Type
+    for board in (
+        "UNS4MP",
+        "UNQ2",
+        "U220",
+        "U402",
+        "EX10",
+        "E224",
+        "EX2",
+        "EM20",
+        "HUNS3",
+    ):
+        if board in upper:
+            result["Board Type"] = board
+            break
+
+    # Link Instance
+    m = LINK_INSTANCE_RE.search(upper)
+    if m:
+        result["Link Instance"] = m.group(1)
+
+    # DROP Service
+    if "DROP" in upper:
+        drop_part = upper
+
+        for keyword, operator in DROP_OPERATOR_RULES.items():
+            if keyword in drop_part:
+                result["Service Name"] = operator
+                break
+
+    # Access Service
+    # Access Service
+    board_pos = upper.find("K1EX10")
+
+    if board_pos == -1:
+        board_pos = upper.find("K1E224")
+
+    if board_pos != -1:
+        start = text.find("(", board_pos)
+
+        end = upper.find("-MAC", start)
+
+        if end == -1:
+            end = upper.find(":MAC", start)
+
+        if end == -1:
+            end = upper.find(": MAC", start)
+
+        if start != -1 and end != -1 and end > start:
+            access_name = text[start + 1:end].strip()
+
+            # Remove extra closing bracket if exists
+            access_name = access_name.rstrip(")").strip()
+
+            access_name = normalize_access_service_name(access_name)
+            if not access_name:
+                
+                 return result
+            result["Access Service Name"] = access_name
+
+            for keyword, service_type in ACCESS_SERVICE_RULES.items():
+                if access_name.startswith(keyword):
+
+                    if keyword == "OLT":
+                        if "[PRIMARY]" not in access_name and "[SECONDARY]" not in access_name:
+                            break
+
+                    result["Access Service Type"] = service_type
+                    break
+
+    # Service Group
+    if "DIGI" in upper or "CELCOM" in upper:
+        result["Service Group"] = "Digi/Celcom"
+
+    elif "MAXIS" in upper:
+        result["Service Group"] = "Maxis"
+
+    elif "YTL" in upper or "UMOBILE" in upper or "U MOBILE" in upper or re.search(r"\bUM\b", upper):
+        result["Service Group"] = "YTL/UM"
+
+    elif "OLT" in upper or "DNB" in upper:
+        result["Service Group"] = "OLT/DNB"
+
+    return result
+def prepare_dataframe(combined):
+    import time
+    raw_time = (
     combined["Collection Time"]
-    .head(20)
+    .astype(str)
+    .str.strip()
+    .str.strip("'")
+    .str.strip('"')
 )
+    combined = combined.copy()
+
+    start = time.perf_counter()
+    combined["Collection Time"] = pd.to_datetime(
+        raw_time,
+        format="%d/%m/%Y %I:%M:%S %p",
+        errors="coerce"
+    )   
+    print(f"Datetime parse: {time.perf_counter()-start:.2f}s")
+
+    start = time.perf_counter()
+    combined["TX_bps"] = convert_bps(combined["TXBPS(bit/s)"])
+    combined["RX_bps"] = convert_bps(combined["RXBPS(bit/s)"])
+    print(f"Parse TX/RX bps: {time.perf_counter()-start:.2f}s")
+
+    start = time.perf_counter()
+    combined["MAX_bps"] = combined[["TX_bps", "RX_bps"]].max(axis=1)
+    print(f"MAX bps: {time.perf_counter()-start:.2f}s")
+
+    start = time.perf_counter()
+    print("Total rows:", len(combined))
+    print("Unique Resource Names:", combined["Resource Name"].nunique())
+    parsed_df = pd.DataFrame(
+        combined["Resource Name"].apply(parse_resource_once).tolist(),
+        index=combined.index
+    )
+    print(f"Parse Resource Name: {time.perf_counter()-start:.2f}s")
+
+    start = time.perf_counter()
+    combined = pd.concat([combined, parsed_df], axis=1)
+    print(f"Concat: {time.perf_counter()-start:.2f}s")
+
     return combined
 
 def get_board_pair_label(group_df):
@@ -391,7 +529,10 @@ def build_service_peak_summary(df):
     ).reset_index(drop=True)
 
 def build_ring_peak_summary(df):
-    ring_df = df[df["Ring"] != ""].dropna(subset=["Collection Time", "TX_bps"]).copy()
+    ring_df = df[df["Ring"] != ""].dropna(
+        subset=["Collection Time", "TX_bps"]
+    ).copy()
+
     output_columns = [
         "Ring",
         "Board Pair",
@@ -410,122 +551,203 @@ def build_ring_peak_summary(df):
         "Util %",
         "Util Band",
     ]
+
     if ring_df.empty:
         return pd.DataFrame(columns=output_columns)
 
     result_rows = []
 
-    link_df = ring_df[(ring_df["Board Type"].isin(["UNQ2", "U220"])) & (ring_df["Link Instance"] != "")].copy()
+    # =========================
+    # U220 / UNQ2
+    # =========================
+    link_df = ring_df[
+        (ring_df["Board Type"].isin(["UNQ2", "U220"])) &
+        (ring_df["Link Instance"] != "") &
+        (ring_df["Service Group"].astype(str) != "")
+    ].copy()
+
     if not link_df.empty:
-        # Final U220/UNQ2 rules:
-        # - YTL/UM/OLT/DNB -> merge only with same instance
-        # - Digi/Celcom/Maxis -> merge only with same instance
-        # - YTL/UM -> merge across different instances
-        # - OLT/DNB -> merge across different instances
-        # - Digi/Celcom -> merge across different instances
-        # - Maxis -> merge across different instances
 
         def u220_monitor_key(row):
             ring = str(row["Ring"])
             instance = str(row["Link Instance"])
             service = str(row["Service Group"])
-            same_instance_only = {"YTL/UM/OLT/DNB", "Digi/Celcom/Maxis"}
+
+            same_instance_only = {
+                "YTL/UM/OLT/DNB",
+                "Digi/Celcom/Maxis",
+            }
+
             if service in same_instance_only:
                 return f"{ring}|SERVICE|{service}|INSTANCE|{instance}"
+
             return f"{ring}|SERVICE|{service}"
 
-        link_df = link_df[link_df["Service Group"].astype(str) != ""].copy()
-        if not link_df.empty:
-            link_df["Monitor Key"] = link_df.apply(u220_monitor_key, axis=1)
-            link_df["Board Pair"] = "U220/UNQ2 (" + link_df["Service Group"].astype(str) + ")"
+        link_df["Monitor Key"] = link_df.apply(u220_monitor_key, axis=1)
+        link_df["Board Pair"] = (
+            "U220/UNQ2 (" + link_df["Service Group"].astype(str) + ")"
+        )
 
-            endpoint_time_totals = link_df.groupby(
-                ["Ring", "Monitor Key", "Service Group", "Collection Time", "Endpoint"],
-                as_index=False
-            )["TX_bps"].sum()
+        endpoint_time_totals = (
+            link_df.groupby(
+                [
+                    "Ring",
+                    "Monitor Key",
+                    "Service Group",
+                    "Collection Time",
+                    "Endpoint",
+                ],
+                as_index=False,
+            )["TX_bps"]
+            .sum()
+        )
 
-            for (ring, monitor_key, service_group), ring_grp in endpoint_time_totals.groupby(
+        endpoint_avg_lookup = (
+            endpoint_time_totals.groupby(
+                ["Ring", "Monitor Key", "Service Group", "Endpoint"]
+            )["TX_bps"]
+            .mean()
+            .to_dict()
+        )
+
+        timestamp_totals = (
+            endpoint_time_totals.groupby(
+                ["Ring", "Monitor Key", "Service Group", "Collection Time"],
+                as_index=False,
+            )["TX_bps"]
+            .sum()
+            .rename(columns={"TX_bps": "Total_TX_bps"})
+        )
+
+        peak_idx = timestamp_totals.groupby(
+            ["Ring", "Monitor Key", "Service Group"]
+        )["Total_TX_bps"].idxmax()
+
+        peak_times = timestamp_totals.loc[peak_idx]
+
+        link_group_lookup = {
+            key: grp
+            for key, grp in link_df.groupby(
                 ["Ring", "Monitor Key", "Service Group"]
-            ):
-                raw_group = link_df[(link_df["Ring"] == ring) & (link_df["Monitor Key"] == monitor_key)].copy()
-                timestamp_totals = ring_grp.groupby("Collection Time", as_index=False)["TX_bps"].sum().rename(
-                    columns={"TX_bps": "Total_TX_bps"}
+            )
+        }
+
+        endpoint_group_lookup = {
+            key: grp
+            for key, grp in endpoint_time_totals.groupby(
+                ["Ring", "Monitor Key", "Service Group"]
+            )
+        }
+
+        for _, peak in peak_times.iterrows():
+            ring = peak["Ring"]
+            monitor_key = peak["Monitor Key"]
+            service_group = peak["Service Group"]
+            peak_time = peak["Collection Time"]
+
+            key = (ring, monitor_key, service_group)
+
+            ring_grp = endpoint_group_lookup.get(key)
+
+            if ring_grp is None or ring_grp.empty:
+                continue
+
+            same_time_grp = (
+                ring_grp[ring_grp["Collection Time"] == peak_time]
+                .sort_values("TX_bps", ascending=False)
+                .reset_index(drop=True)
+            )
+
+            ep1 = same_time_grp.iloc[0]["Endpoint"] if len(same_time_grp) >= 1 else ""
+            tx1 = float(same_time_grp.iloc[0]["TX_bps"]) if len(same_time_grp) >= 1 else 0.0
+
+            ep2 = same_time_grp.iloc[1]["Endpoint"] if len(same_time_grp) >= 2 else ""
+            tx2 = float(same_time_grp.iloc[1]["TX_bps"]) if len(same_time_grp) >= 2 else 0.0
+
+            total = tx1 + tx2
+
+            avg_ep1_bps = float(
+                endpoint_avg_lookup.get(
+                    (ring, monitor_key, service_group, ep1),
+                    0.0,
                 )
-                if timestamp_totals.empty:
-                    continue
+            )
 
-                peak_time = timestamp_totals.loc[timestamp_totals["Total_TX_bps"].idxmax(), "Collection Time"]
-                same_time_grp = (
-                    ring_grp[ring_grp["Collection Time"] == peak_time]
-                    .copy()
-                    .sort_values("TX_bps", ascending=False)
-                    .reset_index(drop=True)
+            avg_ep2_bps = float(
+                endpoint_avg_lookup.get(
+                    (ring, monitor_key, service_group, ep2),
+                    0.0,
                 )
-                peak_time = pd.to_datetime(
-                        peak_time,
-                        dayfirst=True,
-                        errors="coerce"
-                    )
+            )
 
-                ep1 = same_time_grp.iloc[0]["Endpoint"] if len(same_time_grp) >= 1 else ""
-                tx1 = float(same_time_grp.iloc[0]["TX_bps"]) if len(same_time_grp) >= 1 else 0.0
-                ep2 = same_time_grp.iloc[1]["Endpoint"] if len(same_time_grp) >= 2 else ""
-                tx2 = float(same_time_grp.iloc[1]["TX_bps"]) if len(same_time_grp) >= 2 else 0.0
-                total = tx1 + tx2
+            avg_total_bps = avg_ep1_bps + avg_ep2_bps
+            peak_avg_ratio = total / avg_total_bps if avg_total_bps > 0 else 0.0
 
-                endpoint_means = ring_grp.groupby("Endpoint", as_index=False)["TX_bps"].mean()
-                avg_ep1_bps = float(
-                    endpoint_means.loc[endpoint_means["Endpoint"] == ep1, "TX_bps"].iloc[0]
-                ) if ep1 and (endpoint_means["Endpoint"] == ep1).any() else 0.0
-                avg_ep2_bps = float(
-                    endpoint_means.loc[endpoint_means["Endpoint"] == ep2, "TX_bps"].iloc[0]
-                ) if ep2 and (endpoint_means["Endpoint"] == ep2).any() else 0.0
-                avg_total_bps = avg_ep1_bps + avg_ep2_bps
-                peak_avg_ratio = (total / avg_total_bps) if avg_total_bps > 0 else 0.0
+            raw_group = link_group_lookup.get(key)
 
+            if raw_group is None or raw_group.empty:
+                display_instance = ""
+                max_capacity = 0
+            else:
                 instance_list = sorted(
-                    {str(v) for v in raw_group["Link Instance"].dropna().astype(str) if str(v).strip()}
+                    {
+                        str(v)
+                        for v in raw_group["Link Instance"].dropna().astype(str)
+                        if str(v).strip()
+                    }
                 )
                 display_instance = "/".join(instance_list)
+                max_capacity = calculate_group_capacity(raw_group)
 
-                result_rows.append({
-                    "Ring": ring,
-                    "Board Pair": f"U220/UNQ2 ({service_group})",
-                    "Link Instance": display_instance,
-                    "Peak Time": peak_time,
-                    "Endpoint 1": ep1,
-                    "TX 1 (Gbps)": round(tx1 / 1e9, 3),
-                    "Endpoint 2": ep2,
-                    "TX 2 (Gbps)": round(tx2 / 1e9, 3),
-                    "Total TX (Gbps)": round(total / 1e9, 3),
-                    "Avg Endpoint 1 (Gbps)": round(avg_ep1_bps / 1e9, 3),
-                    "Avg Endpoint 2 (Gbps)": round(avg_ep2_bps / 1e9, 3),
-                    "Total Avg (Gbps)": round(avg_total_bps / 1e9, 3),
-                    "Peak Average Ratio": round(peak_avg_ratio, 2),
-                    "Max Capacity (Gbps)": calculate_group_capacity(raw_group),
-                })
+            result_rows.append({
+                "Ring": ring,
+                "Board Pair": f"U220/UNQ2 ({service_group})",
+                "Link Instance": display_instance,
+                "Peak Time": peak_time,
+                "Endpoint 1": ep1,
+                "TX 1 (Gbps)": round(tx1 / 1e9, 3),
+                "Endpoint 2": ep2,
+                "TX 2 (Gbps)": round(tx2 / 1e9, 3),
+                "Total TX (Gbps)": round(total / 1e9, 3),
+                "Avg Endpoint 1 (Gbps)": round(avg_ep1_bps / 1e9, 3),
+                "Avg Endpoint 2 (Gbps)": round(avg_ep2_bps / 1e9, 3),
+                "Total Avg (Gbps)": round(avg_total_bps / 1e9, 3),
+                "Peak Average Ratio": round(peak_avg_ratio, 2),
+                "Max Capacity (Gbps)": max_capacity,
+            })
 
-    non_link_df = ring_df[(~ring_df["Board Type"].isin(["UNQ2", "U220"]))].copy()
+    # =========================
+    # Non U220 / UNQ2
+    # =========================
+    non_link_df = ring_df[
+        ~ring_df["Board Type"].isin(["UNQ2", "U220"])
+    ].copy()
+
     if not non_link_df.empty:
-        # Selective pairing rule:
-        # - E224 and EX10 under the same ring are merged into one logical board pair E224/EX10
-        # - other board types such as UNS4MP stay separate even if the ring name is the same
+
         def assign_non_link_group(row, ring_type_map):
             board_type = str(row["Board Type"])
             ring = row["Ring"]
             ring_types = ring_type_map.get(ring, set())
+
             if board_type in {"E224", "EX10"} and ring_types.issuperset({"E224", "EX10"}):
                 return "E224/EX10"
+
             if board_type in {"U402", "UNS4MP"} and ring_types.issuperset({"U402", "UNS4MP"}):
                 return "U402/UNS4MP"
+
             if board_type in {"E224", "EM20"} and ring_types.issuperset({"E224", "EM20"}):
                 return "E224/EM20"
+
             if board_type in {"EX2", "EM20"} and ring_types.issuperset({"EX2", "EM20"}):
                 return "EX2/EM20"
+
             if board_type in {"EX2", "EX10"} and ring_types.issuperset({"EX2", "EX10"}):
                 return "EX10/EX2"
+
             if board_type in {"HUNS3", "EX10"} and ring_types.issuperset({"HUNS3", "EX10"}):
                 return "EX10/HUNS3"
+
             return board_type
 
         ring_type_map = (
@@ -533,47 +755,98 @@ def build_ring_peak_summary(df):
             .apply(lambda s: {str(v) for v in s.dropna().astype(str) if v and v != "OTHER"})
             .to_dict()
         )
-        non_link_df["Board Pair"] = non_link_df.apply(lambda row: assign_non_link_group(row, ring_type_map), axis=1)
 
-        endpoint_time_totals = non_link_df.groupby(
-            ["Ring", "Board Pair", "Collection Time", "Endpoint"],
-            as_index=False
-        )["TX_bps"].sum()
+        non_link_df["Board Pair"] = non_link_df.apply(
+            lambda row: assign_non_link_group(row, ring_type_map),
+            axis=1,
+        )
 
-        for (ring, board_pair), ring_grp in endpoint_time_totals.groupby(["Ring", "Board Pair"]):
-            raw_group = non_link_df[
-                (non_link_df["Ring"] == ring) & (non_link_df["Board Pair"] == board_pair)
-            ].copy()
+        endpoint_time_totals = (
+            non_link_df.groupby(
+                ["Ring", "Board Pair", "Collection Time", "Endpoint"],
+                as_index=False,
+            )["TX_bps"]
+            .sum()
+        )
 
-            timestamp_totals = ring_grp.groupby("Collection Time", as_index=False)["TX_bps"].sum().rename(
-                columns={"TX_bps": "Total_TX_bps"}
-            )
-            if timestamp_totals.empty:
+        endpoint_avg_lookup = (
+            endpoint_time_totals.groupby(
+                ["Ring", "Board Pair", "Endpoint"]
+            )["TX_bps"]
+            .mean()
+            .to_dict()
+        )
+
+        timestamp_totals = (
+            endpoint_time_totals.groupby(
+                ["Ring", "Board Pair", "Collection Time"],
+                as_index=False,
+            )["TX_bps"]
+            .sum()
+            .rename(columns={"TX_bps": "Total_TX_bps"})
+        )
+
+        peak_idx = timestamp_totals.groupby(
+            ["Ring", "Board Pair"]
+        )["Total_TX_bps"].idxmax()
+
+        peak_times = timestamp_totals.loc[peak_idx]
+
+        endpoint_group_lookup = {
+            key: grp
+            for key, grp in endpoint_time_totals.groupby(["Ring", "Board Pair"])
+        }
+
+        raw_group_lookup = {
+            key: grp
+            for key, grp in non_link_df.groupby(["Ring", "Board Pair"])
+        }
+
+        for _, peak in peak_times.iterrows():
+            ring = peak["Ring"]
+            board_pair = peak["Board Pair"]
+            peak_time = peak["Collection Time"]
+
+            key = (ring, board_pair)
+
+            ring_grp = endpoint_group_lookup.get(key)
+
+            if ring_grp is None or ring_grp.empty:
                 continue
 
-            peak_time = timestamp_totals.loc[timestamp_totals["Total_TX_bps"].idxmax(), "Collection Time"]
             same_time_grp = (
                 ring_grp[ring_grp["Collection Time"] == peak_time]
-                .copy()
                 .sort_values("TX_bps", ascending=False)
                 .reset_index(drop=True)
             )
 
             ep1 = same_time_grp.iloc[0]["Endpoint"] if len(same_time_grp) >= 1 else ""
             tx1 = float(same_time_grp.iloc[0]["TX_bps"]) if len(same_time_grp) >= 1 else 0.0
+
             ep2 = same_time_grp.iloc[1]["Endpoint"] if len(same_time_grp) >= 2 else ""
             tx2 = float(same_time_grp.iloc[1]["TX_bps"]) if len(same_time_grp) >= 2 else 0.0
 
             total = tx1 + tx2
-            endpoint_means = ring_grp.groupby("Endpoint", as_index=False)["TX_bps"].mean()
+
             avg_ep1_bps = float(
-                endpoint_means.loc[endpoint_means["Endpoint"] == ep1, "TX_bps"].iloc[0]
-            ) if ep1 and (endpoint_means["Endpoint"] == ep1).any() else 0.0
+                endpoint_avg_lookup.get(
+                    (ring, board_pair, ep1),
+                    0.0,
+                )
+            )
+
             avg_ep2_bps = float(
-                endpoint_means.loc[endpoint_means["Endpoint"] == ep2, "TX_bps"].iloc[0]
-            ) if ep2 and (endpoint_means["Endpoint"] == ep2).any() else 0.0
+                endpoint_avg_lookup.get(
+                    (ring, board_pair, ep2),
+                    0.0,
+                )
+            )
+
             avg_total_bps = avg_ep1_bps + avg_ep2_bps
-            peak_avg_ratio = (total / avg_total_bps) if avg_total_bps > 0 else 0.0
+            peak_avg_ratio = total / avg_total_bps if avg_total_bps > 0 else 0.0
+
+            raw_group = raw_group_lookup.get(key)
+            max_capacity = calculate_group_capacity(raw_group) if raw_group is not None else 0
 
             result_rows.append({
                 "Ring": ring,
@@ -589,21 +862,29 @@ def build_ring_peak_summary(df):
                 "Avg Endpoint 2 (Gbps)": round(avg_ep2_bps / 1e9, 3),
                 "Total Avg (Gbps)": round(avg_total_bps / 1e9, 3),
                 "Peak Average Ratio": round(peak_avg_ratio, 2),
-                "Max Capacity (Gbps)": calculate_group_capacity(raw_group),
+                "Max Capacity (Gbps)": max_capacity,
             })
 
     if not result_rows:
         return pd.DataFrame(columns=output_columns)
 
     peaks = pd.DataFrame(result_rows)
-    peaks["Util %"] = (peaks["Total TX (Gbps)"] / peaks["Max Capacity (Gbps)"] * 100).round(1)
+
+    peaks["Util %"] = (
+        peaks["Total TX (Gbps)"] /
+        peaks["Max Capacity (Gbps)"] *
+        100
+    ).round(1)
+
+    peaks["Util %"] = peaks["Util %"].replace([float("inf"), -float("inf")], 0).fillna(0)
+
     peaks["Util Band"] = peaks["Total TX (Gbps)"].apply(util_band_ring)
 
     return peaks[output_columns].sort_values(
         ["Total TX (Gbps)", "Ring", "Board Pair"],
-        ascending=[False, True, True]
+        ascending=[False, True, True],
     ).reset_index(drop=True)
-    
+
 def build_100g_peak_summary(df):
     g100_df = df[df["100G Link"] != ""].dropna(
         subset=["Collection Time", "MAX_bps"]
@@ -838,6 +1119,85 @@ def build_ftth_peak_summary(df):
     return result[output_columns].sort_values(
         ["Peak Util (Gbps)", "OLT Name"],
         ascending=[False, True]
+    ).reset_index(drop=True)
+
+def build_access_service_summary(df):
+    access_df = df[
+        (df["Access Service Type"] != "") &
+        (df["Access Service Name"] != "")
+    ].copy()
+
+    output_columns = [
+        "Service Type",
+        "Service Name",
+        "Resource Name",
+        "Peak Time",
+        "TX (Gbps)",
+        "RX (Gbps)",
+        "Peak Direction",
+        "Peak Util (Gbps)",
+        "Average Util (Gbps)",
+        "Current Capacity (Gbps)",
+        "Util %",
+    ]
+
+    if access_df.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    access_df["TX_bps"] = pd.to_numeric(access_df["TX_bps"], errors="coerce").fillna(0)
+    access_df["RX_bps"] = pd.to_numeric(access_df["RX_bps"], errors="coerce").fillna(0)
+    access_df["MAX_bps"] = access_df[["TX_bps", "RX_bps"]].max(axis=1)
+
+    access_df = access_df.sort_values("MAX_bps", ascending=False)
+
+    result = access_df.groupby(
+        ["Access Service Type", "Access Service Name"],
+        as_index=False
+    ).first()
+
+    avg_df = access_df.groupby(
+        ["Access Service Type", "Access Service Name"],
+        as_index=False
+    )["MAX_bps"].mean().rename(columns={"MAX_bps": "AVG_bps"})
+
+    result = result.merge(
+        avg_df,
+        on=["Access Service Type", "Access Service Name"],
+        how="left"
+    )
+
+    result["Service Type"] = result["Access Service Type"]
+    result["Service Name"] = result["Access Service Name"]
+    result["Peak Time"] = result["Collection Time"]
+    result["TX (Gbps)"] = (result["TX_bps"] / 1e9).round(3)
+    result["RX (Gbps)"] = (result["RX_bps"] / 1e9).round(3)
+    result["Peak Util (Gbps)"] = (result["MAX_bps"] / 1e9).round(3)
+    result["Average Util (Gbps)"] = (result["AVG_bps"] / 1e9).round(3)
+    capacity_lookup = {
+    normalize_capacity_match_name(x.site_name): x.current_capacity
+    for x in AccessBandwidth.objects.all()
+}
+    match_names = result["Service Name"].apply(normalize_capacity_match_name)
+
+    result["Current Capacity (Gbps)"] = (
+        match_names.map(capacity_lookup).fillna(0) / 1000
+    ).round(3)
+
+    result["Util %"] = (
+        result["Peak Util (Gbps)"] /
+        result["Current Capacity (Gbps)"] *
+        100
+    ).round(1)
+
+    result.loc[result["Current Capacity (Gbps)"] == 0, "Util %"] = 0
+    result["Peak Direction"] = result.apply(
+        lambda r: "TX" if r["TX_bps"] >= r["RX_bps"] else "RX",
+        axis=1
+    )
+
+    return result[output_columns].sort_values(
+        ["Service Type", "Peak Util (Gbps)", "Service Name"],
+        ascending=[True, False, True]
     ).reset_index(drop=True)
 
 def to_excel_bytes(ring_peaks, g100_peaks, service_peaks=None, ftth_peaks=None,ring_node_details=None):

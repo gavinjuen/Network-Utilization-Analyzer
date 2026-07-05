@@ -41,3 +41,6 @@ class RingMappingUploadForm(forms.Form):
     mapping_file = forms.FileField(
         label="Ring Node Mapping Excel"
     )
+
+class BandwidthMasterUploadForm(forms.Form):
+    bandwidth_file = forms.FileField()

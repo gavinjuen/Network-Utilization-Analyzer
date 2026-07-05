@@ -13,5 +13,10 @@ urlpatterns = [
     name="ring_trend_api"
     ),
     path("ring-nodes/", views.ring_nodes_view, name="ring_nodes"),
-    path("upload-ring-mapping/", views.upload_ring_mapping_view, name="upload_ring_mapping")
+    path("upload-ring-mapping/", views.upload_ring_mapping_view, name="upload_ring_mapping"),
+    path(
+            "upload-bandwidth-master/",
+            views.upload_bandwidth_master_view,
+            name="upload_bandwidth_master",
+        ),
 ]

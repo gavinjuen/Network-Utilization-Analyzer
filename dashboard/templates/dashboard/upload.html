@@ -131,5 +131,41 @@
       </form>
     </div>
   </div>
+  <div class="section-card" style="margin-bottom:18px;">
+  <div class="section-head">
+    <div>
+      <h3 class="section-title">Access Bandwidth Masterlist</h3>
+      <div class="section-note">
+        Upload this Excel only when the access capacity masterlist changes.
+      </div>
+    </div>
+  </div>
+
+  <div style="padding:0 16px 18px;">
+    <form method="post" action="{% url 'upload_bandwidth_master' %}" enctype="multipart/form-data">
+      {% csrf_token %}
+
+      <div class="field-label">Bandwidth Masterlist Excel</div>
+      <div class="field-control">
+        <input type="file" name="bandwidth_file" accept=".xlsx,.xls" required>
+      </div>
+
+      <div class="small-note" style="margin-top:8px;">
+        Required columns: NEID, SITE ID, SITE NAME, CURRENT CAPACITY
+      </div>
+
+      <div class="small-note" style="margin-top:4px;">
+        Current Capacity is stored in Mbps. Example: 450 = 0.45G, 1000 = 1G.
+      </div>
+
+      <div class="btn-row" style="margin-top:18px;">
+        <button class="action-btn" type="submit">
+          <i class="mdi mdi-database-import-outline"></i>
+          Import Bandwidth Masterlist
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
 </div>
 {% endblock %}
